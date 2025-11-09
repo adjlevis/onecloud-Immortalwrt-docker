@@ -1,7 +1,15 @@
 name: Onecloud Immortalwrt Docker Build
 
 on:
+  # ✅ 支持手动触发
   workflow_dispatch:
+
+  # ✅ 每天北京时间 03:00 自动构建
+  schedule:
+    - cron: '0 19 * * *'  # UTC 时间 19:00 = 北京时间 03:00
+
+permissions:
+  contents: write  # ✅ 允许创建/修改 GitHub Release
 
 jobs:
   build:
@@ -19,9 +27,9 @@ jobs:
       # 2️⃣ 清理旧的 release 目录
       - name: Clean old release folder
         run: |
-          echo "🧹 清理旧的 release/Immortalwrt 目录..."
-          rm -rf release/Immortalwrt || true
-          mkdir -p release/Immortalwrt
+          echo "🧹 清理旧的 release/immortalwrt 目录..."
+          rm -rf release/immortalwrt || true
+          mkdir -p release/immortalwrt
 
       # 3️⃣ 准备构建环境
       - name: Prepare environment
@@ -31,7 +39,7 @@ jobs:
           mkdir -p bin files
           sudo chmod -R 777 bin files
 
-      # 4️⃣ 列出可用的 ImageBuilder 配置
+      # 4️⃣ 查看可用 ImageBuilder 配置
       - name: List available profiles
         run: docker run --rm immortalwrt/imagebuilder:armsr-armv7-openwrt-24.10 make info | head -n 50
 
@@ -43,10 +51,10 @@ jobs:
       - name: Build firmware
         run: ./docker-build.sh
 
-      # 7️⃣ 输出构建目录内容（调试用）
+      # 7️⃣ 输出调试内容
       - name: Debug output
         run: |
-          echo "=== immortalwrt/bin 内容 ==="
+          echo "=== bin 目录内容 ==="
           ls -R bin || true
 
       # 8️⃣ 打包固件文件
@@ -55,21 +63,21 @@ jobs:
           echo "📦 打包固件文件..."
           mkdir -p release/immortalwrt
           cp -r bin/targets/armsr/armv7/* release/immortalwrt/ 2>/dev/null || cp -r bin/* release/immortalwrt/ || true
-          echo "✅ release/immortalwrt/ 目录内容如下："
+          echo "✅ release/immortalwrt 目录内容如下："
           ls -R release/immortalwrt || true
 
-      # 9️⃣ 检查 release 目录（调试）
+      # 9️⃣ 检查 release 文件夹
       - name: Debug check release folder
         run: |
-          echo "🔍 release/immortalwrt/ 内容如下："
+          echo "🔍 release/immortalwrt 内容如下："
           find release/immortalwrt || echo "⚠️ release/immortalwrt 为空"
 
-      # 🔟 上传到 GitHub Actions Artifacts
+      # 🔟 上传构建产物
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: immortalwrt-images
-          path: immortalwrt/bin/
+          path: bin/
           if-no-files-found: warn
           compression-level: 6
 
@@ -86,11 +94,11 @@ jobs:
         run: |
           {
             echo 'files<<EOF'
-            ls -1 bin/targets/armsr/armv8/ || ls -1 bin/ || echo "无输出文件"
+            ls -1 bin/targets/armsr/armv7/ || ls -1 bin/ || echo "无输出文件"
             echo 'EOF'
           } >> $GITHUB_OUTPUT
 
-      # 13️⃣ 发布到 GitHub Release（已修正路径）
+      # 13️⃣ 发布到 GitHub Release
       - name: Publish to GitHub Release
         uses: softprops/action-gh-release@v2
         if: always()
@@ -108,8 +116,7 @@ jobs:
             ```
             ${{ steps.list_files.outputs.files }}
             ```
-          files: immortalwrt/release/immortalwrt/**/*
-          overwrite_files: true          # ✅ 修正为正确字段
+          files: release/immortalwrt/**/*
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
