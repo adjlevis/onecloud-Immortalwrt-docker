@@ -6,7 +6,7 @@ on:
     - cron: '0 19 * * *'  # 每日北京时间 03:00 自动构建
 
 permissions:
-  contents: write  # ✅ 允许创建/修改 Release
+  contents: write  # 允许创建/修改 Release
 
 jobs:
   build:
@@ -14,23 +14,20 @@ jobs:
 
     defaults:
       run:
-        working-directory: immortalwrt  # ✅ 正确：docker-build.sh 就在此目录
+        working-directory: immortalwrt  # ✅ 你的 docker-build.sh 在这里
 
     steps:
-      # 1️⃣ 检出仓库
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # ✅ 确保完整 Git 历史可用于 release
+          fetch-depth: 0
 
-      # 2️⃣ 清理旧 release 目录
       - name: Clean old release folder
         run: |
           echo "🧹 清理旧的 release/immortalwrt 目录..."
-          rm -rf release/immortalwrt || true
-          mkdir -p release/immortalwrt
+          rm -rf ../release/immortalwrt || true
+          mkdir -p ../release/immortalwrt
 
-      # 3️⃣ 准备构建环境
       - name: Prepare environment
         run: |
           echo "🔧 准备构建环境..."
@@ -39,39 +36,33 @@ jobs:
           mkdir -p bin files
           sudo chmod -R 777 bin files
 
-      # 4️⃣ 拉取 ImmortalWrt ImageBuilder 镜像
       - name: Pull Immortalwrt ImageBuilder
         run: docker pull immortalwrt/imagebuilder:armsr-armv7-openwrt-24.10
 
-      # 5️⃣ 构建固件
       - name: Build firmware
         run: ./docker-build.sh
 
-      # 6️⃣ 输出调试信息
       - name: Debug output
         run: |
           echo "=== bin 目录内容 ==="
           ls -R bin || true
 
-      # 7️⃣ 打包固件
       - name: Package Immortalwrt firmware
         run: |
           echo "📦 打包固件文件..."
-          mkdir -p release/immortalwrt
-          cp -r bin/targets/armsr/armv7/* release/immortalwrt/ 2>/dev/null || cp -r bin/* release/immortalwrt/ || true
-          echo "✅ release/immortalwrt 目录内容如下："
-          ls -R release/immortalwrt || true
+          mkdir -p ../release/immortalwrt
+          cp -r bin/targets/armsr/armv7/* ../release/immortalwrt/ 2>/dev/null || cp -r bin/* ../release/immortalwrt/ || true
+          echo "✅ ../release/immortalwrt 目录内容如下："
+          ls -R ../release/immortalwrt || true
 
-      # 8️⃣ 上传构建产物（Artifact）
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: immortalwrt-images
-          path: bin/**/*  # ✅ 修正路径：相对 working-directory
+          path: bin/**/*
           if-no-files-found: warn
           compression-level: 6
 
-      # 9️⃣ 获取北京时间
       - name: Get Beijing Time
         id: time
         run: |
@@ -79,7 +70,6 @@ jobs:
           echo "datetime=$(date '+%Y%m%d-%H%M')" >> $GITHUB_OUTPUT
           echo "datetime_readable=$(date '+%Y-%m-%d %H:%M:%S %Z')" >> $GITHUB_OUTPUT
 
-      # 🔟 列出输出文件
       - name: List built files
         id: list_files
         run: |
@@ -89,7 +79,6 @@ jobs:
             echo 'EOF'
           } >> $GITHUB_OUTPUT
 
-      # 11️⃣ 发布到 GitHub Release
       - name: Publish to GitHub Release
         uses: softprops/action-gh-release@v2
         if: always()
@@ -110,14 +99,13 @@ jobs:
 
             💾 下载地址：
             👉 https://github.com/${{ github.repository }}/releases/tag/Onecloud-Immortalwrt-${{ steps.time.outputs.datetime }}
-          files: release/immortalwrt/**/*
+          files: ../release/immortalwrt/**/*  # ✅ 修复路径，确保 Release 能找到文件
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 12️⃣ 自动清理旧版本（仅保留最新 1 个）
       - name: Clean up old Immortalwrt releases
-        if: github.ref == 'refs/heads/main'  # ✅ 仅在主分支清理
+        if: github.ref == 'refs/heads/main'
         uses: dev-drprasad/delete-older-releases@v0.3.3
         with:
           repo: ${{ github.repository }}
