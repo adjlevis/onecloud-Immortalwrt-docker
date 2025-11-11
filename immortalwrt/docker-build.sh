@@ -40,7 +40,7 @@ docker pull "$IMAGE_BUILDER"
 #-----------------------------------------------
 echo "[INFO] 启动固件构建..."
 
-docker run --rm -it \
+docker run --rm  \
   -v "$BUILD_DIR":/home/build/immortalwrt \
   -e BUILD_TARGET="armsr" \
   -e BUILD_SUBTARGET="armv7" \
@@ -77,3 +77,4 @@ echo "[OK] 固件打包完成：$FINAL_IMG"
 # 结束
 #-----------------------------------------------
 echo "[SUCCESS] ImmortalWrt 构建与打包已完成 ✅"
+
