@@ -8,10 +8,11 @@ docker run --rm \
   -v "$WORKDIR/bin:/home/build/immortalwrt/bin" \
   -v "$WORKDIR/files:/home/build/immortalwrt/files" \
   -v "$WORKDIR/build.sh:/home/build/immortalwrt/build.sh" \
-  immortalwrt/imagebuilder:armsr-armv7-openwrt-24.10 \
+  ghcr.io/adjlevis/immortalwrt-imagebuilder:armsr-armv7-latest \
   /home/build/immortalwrt/build.sh
 
 # ✅ 修复权限 & 调试输出
 sudo chmod -R 777 bin || true
 echo "=== Bin 目录内容 ==="
 ls -R bin || true
+
