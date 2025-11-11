@@ -37,8 +37,10 @@ jobs:
           sed -i 's/\r$//' docker-build.sh build.sh || true
           chmod +x docker-build.sh build.sh
           chmod +x ../tool/AmlImg_v0.3.1_linux_amd64 || true
+          chmod +x ../tool/eMMC.burn.img || true
           mkdir -p bin files
           sudo chmod -R 777 bin files
+
 
 
       # 4️⃣ 拉取 ImmortalWrt 构建镜像（替换为你的镜像地址）
