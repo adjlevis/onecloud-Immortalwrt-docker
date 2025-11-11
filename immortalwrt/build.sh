@@ -1,18 +1,16 @@
 #!/bin/bash
 set -euxo pipefail
 
-echo "[Build] 开始构建 ImmortalWrt 固件..."
+echo "[Build] 开始构建 OneCloud ImmortalWrt 固件..."
 
-PACKAGES=""
-PACKAGES="$PACKAGES curl"
-PACKAGES="$PACKAGES luci-i18n-base-zh-cn"
-PACKAGES="$PACKAGES luci-i18n-firewall-zh-cn"
-PACKAGES="$PACKAGES luci-i18n-package-manager-zh-cn"
+PACKAGES="curl luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-i18n-opkg-zh-cn luci-i18n-upnp-zh-cn"
 
-# 构建 ext4 镜像，避免生成 qcow2/vmdk 等虚拟机格式
-make image PACKAGES="$PACKAGES" ROOTFS_PARTSIZE="512" \
+make image \
+  PROFILE="generic" \
+  PACKAGES="$PACKAGES" \
   EXTRA_IMAGE_NAME="ext4-emmc-burn" \
-  EXTRA_IMAGE_FORMATS="ext4.gz"
+  EXTRA_IMAGE_FORMATS="ext4.gz" \
+  ROOTFS_PARTSIZE=512
 
-echo "[Build] 构建完成，输出文件如下："
+echo "[Build] 固件构建完成。输出文件："
 find bin/targets -type f -name "*.img*" -or -name "*.ext4*" || true
