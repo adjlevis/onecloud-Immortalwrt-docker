@@ -17,21 +17,23 @@ jobs:
         working-directory: immortalwrt
 
     steps:
-      # 1️⃣ 检出仓库
+      # 1️⃣ 检出仓库（获取完整提交历史以生成更新日志）
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # 必须获取完整提交记录以生成更新日志
+          fetch-depth: 0
 
       # 2️⃣ 清理旧 release 目录
       - name: Clean old release folder
         run: |
+          echo "🧹 清理旧 release 文件..."
           rm -rf ../release/immortalwrt || true
           mkdir -p ../release/immortalwrt
 
       # 3️⃣ 准备环境
       - name: Prepare environment
         run: |
+          echo "🔧 设置权限与准备目录..."
           sed -i 's/\r$//' docker-build.sh build.sh || true
           chmod +x docker-build.sh build.sh
           mkdir -p bin files
@@ -48,22 +50,25 @@ jobs:
       # 6️⃣ 打包 Amlogic OneCloud 直刷镜像
       - name: Make Amlogic OneCloud burnable image
         run: |
-          cd bin/targets/armsr/armv7/
+          cd bin/targets/armsr/armv7/ || exit 1
           IMG_FILE=$(ls *.img* 2>/dev/null | head -n 1 || true)
-          if [[ "$IMG_FILE" == *.gz ]]; then
-            gunzip -f "$IMG_FILE"
-            IMG_FILE="${IMG_FILE%.gz}"
-          fi
-          if [ -z "$IMG_FILE" ]; then
+          if [[ -z "$IMG_FILE" ]]; then
             echo "❌ 没找到编译输出的 IMG 文件！"
             exit 1
           fi
-          chmod +x ../../../工具/AmlImg_v0.3.1_linux_amd64
-          ../../../工具/AmlImg_v0.3.1_linux_amd64 \
+
+          echo "🧩 使用 AmlImg 工具打包..."
+          [[ "$IMG_FILE" == *.gz ]] && gunzip -f "$IMG_FILE" && IMG_FILE="${IMG_FILE%.gz}"
+          
+          chmod +x ../../../tools/AmlImg_v0.3.1_linux_amd64
+          ../../../tools/AmlImg_v0.3.1_linux_amd64 \
             -i "$IMG_FILE" \
-            -b ../../../工具/eMMC.burn.img \
+            -b ../../../tools/eMMC.burn.img \
             -o Onecloud-immortalwrt-ext4-emmc-burn.img
+
           gzip -f Onecloud-immortalwrt-ext4-emmc-burn.img
+          mv Onecloud-immortalwrt-ext4-emmc-burn.img.gz ../../../release/immortalwrt/
+          echo "✅ 直刷包生成完成：Onecloud-immortalwrt-ext4-emmc-burn.img.gz"
 
       # 7️⃣ 获取北京时间
       - name: Get Beijing Time
@@ -73,8 +78,8 @@ jobs:
           echo "datetime=$(date '+%Y%m%d-%H%M')" >> $GITHUB_OUTPUT
           echo "datetime_readable=$(date '+%Y-%m-%d %H:%M:%S %Z')" >> $GITHUB_OUTPUT
 
-      # 8️⃣ 生成更新日志（自动提取上次发布以来的 commit 记录）
-      - name: Collect changelog since last release
+      # 8️⃣ 自动生成更新日志
+      - name: Generate changelog
         id: changelog
         run: |
           LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
@@ -89,37 +94,37 @@ jobs:
           echo "${LOG:-无更新记录}" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      # 9️⃣ 发布 Release（包含更新说明）
+      # 9️⃣ 发布 Release
       - name: Publish OneCloud burnable image release
         uses: softprops/action-gh-release@v2
         if: always()
         with:
-          tag_name: Onecloud-Immortalwrt-${{ steps.time.outputs.datetime }}
-          name: "Onecloud Immortalwrt (Amlogic eMMC Burn)"
+          tag_name: v${{ steps.time.outputs.datetime }}
+          name: "OneCloud ImmortalWrt - eMMC Burn Edition"
           body: |
-            ✅ Onecloud Immortalwrt 固件构建完成！
-            
-            - 构建编号：${{ github.run_number }}
-            - 发布时间（北京时间）：${{ steps.time.outputs.datetime_readable }}
+            ✅ **OneCloud ImmortalWrt 固件自动构建完成！**
+
+            🕒 发布时间（北京时间）：${{ steps.time.outputs.datetime_readable }}
+            📦 文件名：Onecloud-immortalwrt-ext4-emmc-burn.img.gz
 
             🔧 **更新内容：**
             ${{ steps.changelog.outputs.log }}
 
-            💾 固件文件：
-            Onecloud-immortalwrt-ext4-emmc-burn.gz
-          files: immortalwrt/bin/targets/armsr/armv7/Onecloud-immortalwrt-ext4-emmc-burn.gz
+            💾 下载地址：
+            👉 https://github.com/${{ github.repository }}/releases/tag/v${{ steps.time.outputs.datetime }}
+          files: ../release/immortalwrt/Onecloud-immortalwrt-ext4-emmc-burn.img.gz
           generate_release_notes: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 🔟 清理旧 release，只保留最新 1 个
+      # 🔟 清理旧 Release，只保留最新 1 个
       - name: Clean up old releases
         if: github.ref == 'refs/heads/main'
         uses: dev-drprasad/delete-older-releases@v0.3.3
         with:
           repo: ${{ github.repository }}
           keep_latest: 1
-          delete_tag_pattern: "Onecloud-Immortalwrt-*"
+          delete_tag_pattern: "v*"
           delete_prerelease_only: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
