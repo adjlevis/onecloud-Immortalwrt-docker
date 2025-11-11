@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/bin/bash 
 set -euxo pipefail
 
 WORKDIR=$(pwd)
@@ -11,8 +11,6 @@ docker run --rm \
   ghcr.io/adjlevis/immortalwrt-imagebuilder:armsr-armv7-latest \
   /home/build/immortalwrt/build.sh
 
-# ✅ 修复权限 & 调试输出
 sudo chmod -R 777 bin || true
 echo "=== Bin 目录内容 ==="
 ls -R bin || true
-
