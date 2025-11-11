@@ -1,4 +1,4 @@
-name: Onecloud Immortalwrt Docker Build
+name: OneCloud ImmortalWrt Docker Build
 
 on:
   workflow_dispatch:
@@ -39,11 +39,11 @@ jobs:
           mkdir -p bin files
           sudo chmod -R 777 bin files
 
-      # 4️⃣ 拉取 ImageBuilder 镜像
-      - name: Pull Immortalwrt ImageBuilder
-        run: docker pull immortalwrt/imagebuilder:armsr-armv7-openwrt-24.10
+      # 4️⃣ 拉取 ImmortalWrt 构建镜像（替换为你的镜像地址）
+      - name: Pull ImmortalWrt ImageBuilder
+        run: docker pull ghcr.io/adjlevis/immortalwrt-imagebuilder:armsr-armv7-latest
 
-      # 5️⃣ 编译固件
+      # 5️⃣ 运行 Docker 构建脚本
       - name: Build firmware
         run: ./docker-build.sh
 
@@ -59,11 +59,12 @@ jobs:
 
           echo "🧩 使用 AmlImg 工具打包..."
           [[ "$IMG_FILE" == *.gz ]] && gunzip -f "$IMG_FILE" && IMG_FILE="${IMG_FILE%.gz}"
-          
-          chmod +x ../../../tools/AmlImg_v0.3.1_linux_amd64
-          ../../../tools/AmlImg_v0.3.1_linux_amd64 \
+
+          # 由于 tool 目录在仓库根目录，这里路径需调整
+          chmod +x ../../../tool/AmlImg_v0.3.1_linux_amd64
+          ../../../tool/AmlImg_v0.3.1_linux_amd64 \
             -i "$IMG_FILE" \
-            -b ../../../tools/eMMC.burn.img \
+            -b ../../../tool/eMMC.burn.img \
             -o Onecloud-immortalwrt-ext4-emmc-burn.img
 
           gzip -f Onecloud-immortalwrt-ext4-emmc-burn.img
