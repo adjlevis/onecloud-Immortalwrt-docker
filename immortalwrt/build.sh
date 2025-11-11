@@ -9,7 +9,7 @@ PACKAGES="$PACKAGES luci-i18n-base-zh-cn"
 PACKAGES="$PACKAGES luci-i18n-firewall-zh-cn"
 PACKAGES="$PACKAGES luci-i18n-package-manager-zh-cn"
 
-# 构建 ext4 镜像，不生成 qcow2/vmdk，避免 qemu-img 错误
+# 构建 ext4 镜像，避免生成 qcow2/vmdk 等虚拟机格式
 make image PACKAGES="$PACKAGES" ROOTFS_PARTSIZE="512" \
   EXTRA_IMAGE_NAME="ext4-emmc-burn" \
   EXTRA_IMAGE_FORMATS="ext4.gz"
