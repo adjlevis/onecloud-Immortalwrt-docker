@@ -15,8 +15,11 @@ jobs:
     defaults:
       run:
         working-directory: immortalwrt
-
     steps:
+      # 0️⃣ 启用 QEMU 以支持 ARM 架构容器
+      - name: Enable QEMU for multi-arch builds
+        uses: docker/setup-qemu-action@v3
+  
       # 1️⃣ 检出仓库（获取完整提交历史以生成更新日志）
       - name: Checkout repository
         uses: actions/checkout@v4
