@@ -24,7 +24,7 @@ PACKAGES=""
 PACKAGES="$PACKAGES curl wget ca-certificates"
 PACKAGES="$PACKAGES luci luci-compat luci-base luci-app-firewall"
 PACKAGES="$PACKAGES luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-i18n-package-manager-zh-cn"
-PACKAGES="$PACKAGES ppp ppp-mod-pppoe luci-proto-ppp"
+#PACKAGES="$PACKAGES ppp ppp-mod-pppoe luci-proto-ppp"
 
 # 常用增强插件
 PACKAGES="$PACKAGES luci-app-docker luci-app-ttyd luci-app-filebrowser"
@@ -87,3 +87,4 @@ cat > ../release_note/update.txt <<EOF
 EOF
 
 echo "✅ 构建完成！固件请查看 bin/targets/"
+
