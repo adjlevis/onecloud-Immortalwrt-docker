@@ -34,7 +34,7 @@ echo "[OK] AmlImg 工具与 eMMC.burn.img 均已找到"
 #-----------------------------------------------
 # Docker 镜像设置
 #-----------------------------------------------
-IMAGE_BUILDER="ghcr.io/adjlevis/immortalwrt-imagebuilder:armsr-armv7-latest"
+IMAGE_BUILDER="ghcr.io/immortalwrt/imagebuilder:armsr-armv7-24.10-SNAPSHOT"
 
 echo "[INFO] 拉取构建镜像: $IMAGE_BUILDER"
 docker pull "$IMAGE_BUILDER"
@@ -86,3 +86,4 @@ echo "[INFO] 使用 AmlImg 打包 eMMC 镜像..."
 "$AMLIMG" pack "$EMMC_IMG" "$FINAL_IMG"
 
 echo "[OK] ✅ 固件打包完成：$FINAL_IMG"
+
