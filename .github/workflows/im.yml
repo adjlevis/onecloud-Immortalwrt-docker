@@ -39,7 +39,7 @@ jobs:
 
       # 4️⃣ 拉取 ImageBuilder 镜像
       - name: Pull Immortalwrt ImageBuilder
-        run: docker pull ghcr.io/adjlevis/immortalwrt-imagebuilder:armsr-armv7-latest
+        run: docker pull ghcr.io/immortalwrt/imagebuilder:armsr-armv7-24.10-SNAPSHOT
 
       # 5️⃣ 启动 docker-build.sh 构建固件
       - name: Run Docker build
