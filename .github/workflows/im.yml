@@ -14,44 +14,50 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2️⃣ 设置 Docker 环境
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
-
-      # 3️⃣ 调试：查看文件结构（可确认路径）
+      # 2️⃣ 显示目录结构（方便调试）
       - name: Debug file structure
         run: |
           echo "📁 当前仓库结构如下："
           ls -R
 
-      # 4️⃣ 修复脚本格式并授权
+      # 3️⃣ 安装 dos2unix 并修复脚本格式
       - name: Prepare scripts
         run: |
-          echo "🔧 修正换行符并设置执行权限..."
-          sudo apt-get update && sudo apt-get install -y dos2unix
+          echo "🔧 修正脚本换行符并赋予执行权限..."
+          sudo apt-get update -y && sudo apt-get install -y dos2unix
 
-          # 转换脚本为 Linux 格式
           dos2unix ./immortalwrt/docker-build.sh || true
           dos2unix ./immortalwrt/build.sh || true
-
           chmod +x ./immortalwrt/docker-build.sh ./immortalwrt/build.sh
+
           echo "✅ 脚本状态："
           file ./immortalwrt/docker-build.sh ./immortalwrt/build.sh
 
-      # 5️⃣ 拉取 ImageBuilder（推荐 armv7 版本）
+      # 4️⃣ 修复宿主机文件权限，防止容器内 chmod 报错
+      - name: Fix permissions
+        run: |
+          echo "🔧 修复宿主机文件权限..."
+          sudo chmod -R 777 immortalwrt tool || true
+          sudo chown -R $USER:$USER immortalwrt tool || true
+
+      # 5️⃣ 设置 Docker QEMU 和 Buildx 环境
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 6️⃣ 拉取 ImmortalWrt ImageBuilder
       - name: Pull ImmortalWrt ImageBuilder
         run: |
           docker pull immortalwrt/imagebuilder:armsr-armv7-24.10-SNAPSHOT
 
-      # 6️⃣ 执行构建（核心步骤）
+      # 7️⃣ 执行 docker 构建
       - name: Run build
         run: |
           echo "🚀 启动 ImmortalWrt Docker 构建..."
           bash ./immortalwrt/docker-build.sh
 
-      # 7️⃣ 收集产物
+      # 8️⃣ 收集固件产物
       - name: Collect firmware
         run: |
           echo "📦 收集固件产物..."
@@ -60,7 +66,7 @@ jobs:
           echo "✅ 产物列表："
           ls -lh release/immortalwrt || true
 
-      # 8️⃣ 自动生成 OneCloud 线刷包
+      # 9️⃣ 自动生成 OneCloud 线刷包
       - name: Make OneCloud burnable image
         run: |
           echo "🔥 开始生成 OneCloud eMMC 线刷镜像..."
@@ -95,19 +101,19 @@ jobs:
           echo "✅ 线刷包生成完成："
           ls -lh
 
-      # 9️⃣ 上传产物
+      # 🔟 上传产物到 GitHub Actions
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: OneCloud-ImmortalWrt
           path: release/immortalwrt
 
-      # 🔟 获取构建时间
+      # 1️⃣1️⃣ 获取时间戳
       - name: Get Time
         id: time
         run: echo "datetime=$(date +'%Y%m%d-%H%M')" >> $GITHUB_OUTPUT
 
-      # 1️⃣1️⃣ 发布到 GitHub Release
+      # 1️⃣2️⃣ 自动发布到 GitHub Release
       - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
@@ -115,8 +121,8 @@ jobs:
           name: "OneCloud ImmortalWrt Build ${{ steps.time.outputs.datetime }}"
           body: |
             ✅ **OneCloud ImmortalWrt 固件构建成功！**
-
-            包含自动封装的线刷镜像：
+            
+            📦 自动生成的线刷镜像：
             `Onecloud-immortalwrt-emmc-burn.img.gz`
           files: release/immortalwrt/**/*
         env:
