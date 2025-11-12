@@ -8,6 +8,7 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
       # 1️⃣ 拉取代码
       - name: Checkout repository
@@ -19,39 +20,104 @@ jobs:
       - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 3️⃣ 授权 & 执行构建（在仓库根目录）
+      # 3️⃣ 调试：查看文件结构（可确认路径）
+      - name: Debug file structure
+        run: |
+          echo "📁 当前仓库结构如下："
+          ls -R
+
+      # 4️⃣ 修复脚本格式并授权
+      - name: Prepare scripts
+        run: |
+          echo "🔧 修正换行符并设置执行权限..."
+          sudo apt-get update && sudo apt-get install -y dos2unix
+
+          # 转换脚本为 Linux 格式
+          dos2unix ./immortalwrt/docker-build.sh || true
+          dos2unix ./immortalwrt/build.sh || true
+
+          chmod +x ./immortalwrt/docker-build.sh ./immortalwrt/build.sh
+          echo "✅ 脚本状态："
+          file ./immortalwrt/docker-build.sh ./immortalwrt/build.sh
+
+      # 5️⃣ 拉取 ImageBuilder（推荐 armv7 版本）
+      - name: Pull ImmortalWrt ImageBuilder
+        run: |
+          docker pull immortalwrt/imagebuilder:armsr-armv7-24.10-SNAPSHOT
+
+      # 6️⃣ 执行构建（核心步骤）
       - name: Run build
         run: |
-          chmod +x ./immortalwrt/docker-build.sh
-          ./immortalwrt/docker-build.sh
+          echo "🚀 启动 ImmortalWrt Docker 构建..."
+          bash ./immortalwrt/docker-build.sh
 
-      # 4️⃣ 收集产物
+      # 7️⃣ 收集产物
       - name: Collect firmware
         run: |
+          echo "📦 收集固件产物..."
           mkdir -p release/immortalwrt
-          cp -r immortalwrt/bin/targets/armsr/armv7/* release/immortalwrt/
-          ls -lh release/immortalwrt
+          cp -r immortalwrt/bin/targets/armsr/armv7/* release/immortalwrt/ 2>/dev/null || true
+          echo "✅ 产物列表："
+          ls -lh release/immortalwrt || true
 
-      # 5️⃣ 上传产物
+      # 8️⃣ 自动生成 OneCloud 线刷包
+      - name: Make OneCloud burnable image
+        run: |
+          echo "🔥 开始生成 OneCloud eMMC 线刷镜像..."
+          cd release/immortalwrt || exit 1
+
+          ROOTFS_IMG=$(ls *rootfs*.img.gz 2>/dev/null | head -n 1 || true)
+          if [[ -z "$ROOTFS_IMG" ]]; then
+            echo "❌ 未找到 rootfs 镜像 (*.rootfs.img.gz)"
+            ls -lh
+            exit 1
+          fi
+
+          echo "🧩 找到 rootfs 镜像: $ROOTFS_IMG"
+          gunzip -f "$ROOTFS_IMG"
+          ROOTFS_IMG="${ROOTFS_IMG%.gz}"
+
+          TOOL_PATH="../../tool/AmlImg_v0.3.1_linux_amd64"
+          BURN_IMG="../../tool/eMMC.burn.img"
+
+          if [[ ! -x "$TOOL_PATH" ]]; then
+            chmod +x "$TOOL_PATH"
+          fi
+
+          if [[ ! -f "$BURN_IMG" ]]; then
+            echo "❌ 找不到模板 eMMC.burn.img"
+            exit 1
+          fi
+
+          "$TOOL_PATH" -i "$ROOTFS_IMG" -b "$BURN_IMG" -o Onecloud-immortalwrt-emmc-burn.img
+          gzip -f Onecloud-immortalwrt-emmc-burn.img
+
+          echo "✅ 线刷包生成完成："
+          ls -lh
+
+      # 9️⃣ 上传产物
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: OneCloud-ImmortalWrt
           path: release/immortalwrt
 
-      # 6️⃣ 创建 Release
+      # 🔟 获取构建时间
       - name: Get Time
         id: time
         run: echo "datetime=$(date +'%Y%m%d-%H%M')" >> $GITHUB_OUTPUT
 
+      # 1️⃣1️⃣ 发布到 GitHub Release
       - name: Publish Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: Onecloud-${{ steps.time.outputs.datetime }}
           name: "OneCloud ImmortalWrt Build ${{ steps.time.outputs.datetime }}"
           body: |
-            ✅ OneCloud ImmortalWrt 固件构建成功！
-            包含线刷镜像 (Onecloud-immortalwrt-emmc-burn.img.gz)
+            ✅ **OneCloud ImmortalWrt 固件构建成功！**
+
+            包含自动封装的线刷镜像：
+            `Onecloud-immortalwrt-emmc-burn.img.gz`
           files: release/immortalwrt/**/*
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
