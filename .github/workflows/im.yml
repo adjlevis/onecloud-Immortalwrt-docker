@@ -22,7 +22,17 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm, arm64
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
+      - name: Run build script
+        run: |
+          chmod +x immortalwrt/docker-build.sh
+          ./immortalwrt/docker-build.sh
       # 2️⃣ 清理旧 release 文件夹
       - name: Clean old release folder
         run: |
