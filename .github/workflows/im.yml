@@ -6,7 +6,7 @@ on:
     - cron: '0 19 * * *'  # UTC 19:00 = 北京时间 03:00 自动构建
 
 permissions:
-  contents: write  # ✅ 允许创建/修改 Release
+  contents: write  # 允许创建/修改 Release
 
 jobs:
   build:
@@ -14,7 +14,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: immortalwrt  # ✅ docker-build.sh 在这里
+        working-directory: immortalwrt  # docker-build.sh 在此目录
 
     steps:
       # 1️⃣ 检出仓库
@@ -23,7 +23,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      # 2️⃣ 清理旧 release 目录
+      # 2️⃣ 清理旧 release 文件夹
       - name: Clean old release folder
         run: |
           echo "🧹 清理旧 release 文件..."
@@ -47,7 +47,7 @@ jobs:
       - name: Build firmware
         run: ./docker-build.sh
 
-      # 6️⃣ 调试输出
+      # 6️⃣ 输出调试信息
       - name: Debug output
         run: |
           echo "=== bin 目录内容 ==="
@@ -59,7 +59,7 @@ jobs:
           echo "📦 打包固件文件..."
           mkdir -p ../release/immortalwrt
           cp -r bin/targets/armsr/armv7/* ../release/immortalwrt/ 2>/dev/null || cp -r bin/* ../release/immortalwrt/ || true
-          echo "✅ release/immortalwrt 目录内容如下："
+          echo "✅ release/immortalwrt 内容如下："
           ls -R ../release/immortalwrt || true
 
       # 8️⃣ 自动封装 OneCloud 线刷包
@@ -151,7 +151,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 1️⃣3️⃣ 自动清理旧 Release，仅保留最新 1 个
+      # 1️⃣3️⃣ 清理旧 Release，仅保留最新 1 个
       - name: Clean up old Immortalwrt releases
         if: github.ref == 'refs/heads/main'
         uses: dev-drprasad/delete-older-releases@v0.3.3
