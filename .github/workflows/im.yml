@@ -12,16 +12,14 @@ jobs:
   build:
     runs-on: ubuntu-latest
 
-    defaults:
-      run:
-        working-directory: immortalwrt  # docker-build.sh 在此目录
-
     steps:
       # 1️⃣ 检出仓库
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      # 2️⃣ 设置 QEMU + Buildx
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
         with:
@@ -29,60 +27,48 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Run build script
+      # 3️⃣ 修复权限与行尾符
+      - name: Prepare scripts
         run: |
-          chmod +x ./immortalwrt/docker-build.sh
-          ./immortalwrt/docker-build.sh
-          
-      # 2️⃣ 清理旧 release 文件夹
-      - name: Clean old release folder
-        run: |
-          echo "🧹 清理旧 release 文件..."
-          rm -rf ../release/immortalwrt || true
-          mkdir -p ../release/immortalwrt
-
-      # 3️⃣ 准备环境
-      - name: Prepare environment
-        run: |
-          echo "🔧 准备构建环境..."
-          sed -i 's/\r$//' docker-build.sh build.sh || true
-          chmod +x docker-build.sh build.sh
-          mkdir -p bin files
-          sudo chmod -R 777 bin files
-
-          echo "⚙️ 修复 AmlImg 执行权限..."
-          chmod +x ../tool/AmlImg_v0.3.1_linux_amd64 || true
-          file ../tool/AmlImg_v0.3.1_linux_amd64 || true
-          ls -l ../tool
+          echo "🔧 修复行尾符与权限..."
+          chmod +x immortalwrt/docker-build.sh immortalwrt/build.sh || true
+          sed -i 's/\r$//' immortalwrt/docker-build.sh immortalwrt/build.sh || true
+          chmod +x tool/AmlImg_v0.3.1_linux_amd64 || true
+          file tool/AmlImg_v0.3.1_linux_amd64 || true
+          ls -l tool || true
 
       # 4️⃣ 拉取 ImageBuilder 镜像
       - name: Pull Immortalwrt ImageBuilder
         run: docker pull ghcr.io/adjlevis/immortalwrt-imagebuilder:armsr-armv7-latest
 
-      # 5️⃣ 编译固件
-      - name: Build firmware
-        run: ./docker-build.sh
+      # 5️⃣ 启动 docker-build.sh 构建固件
+      - name: Run Docker build
+        run: |
+          echo "🚀 启动 docker-build.sh 构建固件..."
+          cd immortalwrt
+          chmod +x docker-build.sh build.sh
+          ./docker-build.sh
 
-      # 6️⃣ 输出调试信息
+      # 6️⃣ 输出构建结果目录
       - name: Debug output
         run: |
-          echo "=== bin 目录内容 ==="
-          ls -R bin || true
+          echo "=== immortalwrt/bin 目录内容 ==="
+          ls -R immortalwrt/bin || true
 
-      # 7️⃣ 打包普通固件
-      - name: Package Immortalwrt firmware
+      # 7️⃣ 准备 release 目录
+      - name: Prepare release folder
         run: |
-          echo "📦 打包固件文件..."
-          mkdir -p ../release/immortalwrt
-          cp -r bin/targets/armsr/armv7/* ../release/immortalwrt/ 2>/dev/null || cp -r bin/* ../release/immortalwrt/ || true
-          echo "✅ release/immortalwrt 内容如下："
-          ls -R ../release/immortalwrt || true
+          echo "📦 准备 release 目录..."
+          rm -rf release/immortalwrt || true
+          mkdir -p release/immortalwrt
+          cp -r immortalwrt/bin/* release/immortalwrt/ || true
+          ls -R release/immortalwrt || true
 
-      # 8️⃣ 自动封装 OneCloud 线刷包
+      # 8️⃣ 制作 OneCloud 线刷包
       - name: Make Amlogic OneCloud burnable image
         run: |
           echo "🔥 开始生成 Amlogic OneCloud 线刷包..."
-          cd ../release/immortalwrt || exit 1
+          cd release/immortalwrt || exit 1
 
           ROOTFS_IMG=$(ls *rootfs*.img.gz 2>/dev/null | head -n 1 || true)
           if [[ -z "$ROOTFS_IMG" ]]; then
@@ -95,11 +81,11 @@ jobs:
           gunzip -f "$ROOTFS_IMG"
           ROOTFS_IMG="${ROOTFS_IMG%.gz}"
 
-          TOOL_PATH="../tool/AmlImg_v0.3.1_linux_amd64"
-          BURN_IMG="../tool/eMMC.burn.img"
+          TOOL_PATH="../../tool/AmlImg_v0.3.1_linux_amd64"
+          BURN_IMG="../../tool/eMMC.burn.img"
 
           if [[ ! -x "$TOOL_PATH" ]]; then
-            echo "⚙️ 赋予执行权限: $TOOL_PATH"
+            echo "⚙️ 修复 AmlImg 执行权限..."
             chmod +x "$TOOL_PATH"
           fi
 
@@ -118,12 +104,12 @@ jobs:
           echo "🎯 最终输出文件列表："
           ls -lh
 
-      # 9️⃣ 上传构建产物（可从 Actions 页面下载）
+      # 9️⃣ 上传构建产物
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Onecloud-Immortalwrt-Build
-          path: ../release/immortalwrt
+          path: release/immortalwrt
           if-no-files-found: warn
           compression-level: 6
 
@@ -141,7 +127,7 @@ jobs:
         run: |
           {
             echo 'files<<EOF'
-            find ../release/immortalwrt -type f | sed 's|^|./|' || echo "无输出文件"
+            find release/immortalwrt -type f | sed 's|^|./|' || echo "无输出文件"
             echo 'EOF'
           } >> $GITHUB_OUTPUT
 
@@ -162,7 +148,7 @@ jobs:
 
             💾 下载地址：
             👉 https://github.com/${{ github.repository }}/releases/tag/Onecloud-Immortalwrt-${{ steps.time.outputs.datetime }}
-          files: ../release/immortalwrt/**/*
+          files: release/immortalwrt/**/*
           generate_release_notes: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
