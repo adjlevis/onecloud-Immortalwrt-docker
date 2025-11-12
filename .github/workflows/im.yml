@@ -31,8 +31,9 @@ jobs:
 
       - name: Run build script
         run: |
-          chmod +x immortalwrt/docker-build.sh
+          chmod +x ./immortalwrt/docker-build.sh
           ./immortalwrt/docker-build.sh
+          
       # 2️⃣ 清理旧 release 文件夹
       - name: Clean old release folder
         run: |
