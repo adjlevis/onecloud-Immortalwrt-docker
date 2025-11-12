@@ -21,6 +21,9 @@ echo "[INFO] 修复 build.sh 格式..."
 dos2unix "$WORKDIR/immortalwrt/build.sh" || true
 chmod +x "$WORKDIR/immortalwrt/build.sh"
 
+# 创建输出目录
+mkdir -p "$WORKDIR/release"
+
 echo "[INFO] 启动 Docker 容器进行编译..."
 docker run --rm -i \
     -v "$WORKDIR/immortalwrt:/home/build/immortalwrt" \
@@ -29,14 +32,22 @@ docker run --rm -i \
     -e ROOTFS_PARTSIZE=512 \
     -e TZ=Asia/Shanghai \
     "$IMAGE" bash -c "
-        set -e
+        set -eux
         cd /home/build/immortalwrt
+
         echo '[Build] 🚀 开始构建 ImmortalWrt 固件...'
-        rm -rf bin/
+
+        # 修复权限
+        chmod -R 777 /home/build/immortalwrt
+
+        rm -rf bin/ || true
         mkdir -p bin/
+
         PACKAGES='curl luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-i18n-opkg-zh-cn luci-i18n-upnp-zh-cn luci-app-upnp luci-app-firewall'
-        echo '[Build] 📦 安装包列表: ' \$PACKAGES
+        echo '[Build] 📦 软件包列表: ' \$PACKAGES
+
         make -C . image PROFILE=generic PACKAGES=\"\$PACKAGES\" EXTRA_IMAGE_NAME=emmc-burn EXTRA_IMAGE_FORMATS='ext4.gz img.gz' ROOTFS_PARTSIZE=512
+
         echo '[Build] ✅ 构建完成！'
         ls -lh bin/targets/armsr/armv7/ || true
     "
