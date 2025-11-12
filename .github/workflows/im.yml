@@ -1,166 +1,57 @@
-name: Onecloud Immortalwrt Docker Build
+name: OneCloud ImmortalWrt Build & Burn
 
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 19 * * *'  # UTC 19:00 = 北京时间 03:00 自动构建
-
-permissions:
-  contents: write  # 允许创建/修改 Release
+    - cron: '0 19 * * *'  # 每天北京时间 03:00 自动构建
 
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-      # 1️⃣ 检出仓库
+      # 1️⃣ 拉取代码
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      # 2️⃣ 设置 QEMU + Buildx
+      # 2️⃣ 设置 Docker 环境
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
-        with:
-          platforms: all
-      - name: Set up Docker Buildx
+      - name: Set up Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 3️⃣ 修复权限与行尾符
-      - name: Prepare scripts
+      # 3️⃣ 授权 & 执行构建
+      - name: Run build
         run: |
-          echo "🔧 修复行尾符与权限..."
-          chmod +x immortalwrt/docker-build.sh immortalwrt/build.sh || true
-          sed -i 's/\r$//' immortalwrt/docker-build.sh immortalwrt/build.sh || true
-          chmod +x tool/AmlImg_v0.3.1_linux_amd64 || true
-          file tool/AmlImg_v0.3.1_linux_amd64 || true
-          ls -l tool || true
+          chmod +x immortalwrt/docker-build.sh
+          ./immortalwrt/docker-build.sh
 
-      # 4️⃣ 拉取 ImageBuilder 镜像
-      - name: Pull Immortalwrt ImageBuilder
-        run: docker pull ghcr.io/immortalwrt/imagebuilder:armsr-armv7-24.10-SNAPSHOT
-
-      # 5️⃣ 启动 docker-build.sh 构建固件
-      - name: Run Docker build
+      # 4️⃣ 收集产物
+      - name: Collect firmware
         run: |
-          echo "🚀 启动 docker-build.sh 构建固件..."
-          cd immortalwrt
-          chmod +x docker-build.sh build.sh
-          ./docker-build.sh
-
-      # 6️⃣ 输出构建结果目录
-      - name: Debug output
-        run: |
-          echo "=== immortalwrt/bin 目录内容 ==="
-          ls -R immortalwrt/bin || true
-
-      # 7️⃣ 准备 release 目录
-      - name: Prepare release folder
-        run: |
-          echo "📦 准备 release 目录..."
-          rm -rf release/immortalwrt || true
           mkdir -p release/immortalwrt
-          cp -r immortalwrt/bin/* release/immortalwrt/ || true
-          ls -R release/immortalwrt || true
+          cp -r immortalwrt/bin/targets/armsr/armv7/* release/immortalwrt/
+          ls -lh release/immortalwrt
 
-      # 8️⃣ 制作 OneCloud 线刷包
-      - name: Make Amlogic OneCloud burnable image
-        run: |
-          echo "🔥 开始生成 Amlogic OneCloud 线刷包..."
-          cd release/immortalwrt || exit 1
-
-          ROOTFS_IMG=$(ls *rootfs*.img.gz 2>/dev/null | head -n 1 || true)
-          if [[ -z "$ROOTFS_IMG" ]]; then
-            echo "❌ 未找到 rootfs 镜像 (*.rootfs.img.gz)"
-            ls -lh
-            exit 1
-          fi
-
-          echo "🧩 找到 rootfs 镜像: $ROOTFS_IMG"
-          gunzip -f "$ROOTFS_IMG"
-          ROOTFS_IMG="${ROOTFS_IMG%.gz}"
-
-          TOOL_PATH="../../tool/AmlImg_v0.3.1_linux_amd64"
-          BURN_IMG="../../tool/eMMC.burn.img"
-
-          if [[ ! -x "$TOOL_PATH" ]]; then
-            echo "⚙️ 修复 AmlImg 执行权限..."
-            chmod +x "$TOOL_PATH"
-          fi
-
-          if [[ ! -f "$BURN_IMG" ]]; then
-            echo "❌ 找不到 eMMC.burn.img 模板: $BURN_IMG"
-            exit 1
-          fi
-
-          echo "🚀 开始封装 burn.img..."
-          "$TOOL_PATH" -i "$ROOTFS_IMG" -b "$BURN_IMG" -o Onecloud-immortalwrt-ext4-emmc-burn.img
-
-          echo "📦 压缩生成的线刷包..."
-          gzip -f Onecloud-immortalwrt-ext4-emmc-burn.img
-          echo "✅ 生成完成: Onecloud-immortalwrt-ext4-emmc-burn.img.gz"
-
-          echo "🎯 最终输出文件列表："
-          ls -lh
-
-      # 9️⃣ 上传构建产物
-      - name: Upload build artifacts
+      # 5️⃣ 上传产物
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: Onecloud-Immortalwrt-Build
+          name: OneCloud-ImmortalWrt
           path: release/immortalwrt
-          if-no-files-found: warn
-          compression-level: 6
 
-      # 🔟 获取北京时间
-      - name: Get Beijing Time
+      # 6️⃣ 创建 Release
+      - name: Get Time
         id: time
-        run: |
-          export TZ=Asia/Shanghai
-          echo "datetime=$(date '+%Y%m%d-%H%M')" >> $GITHUB_OUTPUT
-          echo "datetime_readable=$(date '+%Y-%m-%d %H:%M:%S %Z')" >> $GITHUB_OUTPUT
+        run: echo "datetime=$(date +'%Y%m%d-%H%M')" >> $GITHUB_OUTPUT
 
-      # 1️⃣1️⃣ 列出构建文件
-      - name: List built files
-        id: list_files
-        run: |
-          {
-            echo 'files<<EOF'
-            find release/immortalwrt -type f | sed 's|^|./|' || echo "无输出文件"
-            echo 'EOF'
-          } >> $GITHUB_OUTPUT
-
-      # 1️⃣2️⃣ 发布到 GitHub Release
-      - name: Publish to GitHub Release
+      - name: Publish Release
         uses: softprops/action-gh-release@v2
-        if: always()
         with:
-          tag_name: Onecloud-Immortalwrt-${{ steps.time.outputs.datetime }}
-          name: "Onecloud Immortalwrt Build - ${{ steps.time.outputs.datetime }}"
+          tag_name: Onecloud-${{ steps.time.outputs.datetime }}
+          name: "OneCloud ImmortalWrt Build ${{ steps.time.outputs.datetime }}"
           body: |
-            ✅ **OneCloud ImmortalWrt 固件自动构建完成！**
-
-            🕒 发布时间（北京时间）：${{ steps.time.outputs.datetime_readable }}
-
-            📦 文件内容如下：
-            ${{ steps.list_files.outputs.files }}
-
-            💾 下载地址：
-            👉 https://github.com/${{ github.repository }}/releases/tag/Onecloud-Immortalwrt-${{ steps.time.outputs.datetime }}
+            ✅ OneCloud ImmortalWrt 固件构建成功！
+            包含线刷镜像 (Onecloud-immortalwrt-emmc-burn.img.gz)
           files: release/immortalwrt/**/*
-          generate_release_notes: false
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      # 1️⃣3️⃣ 清理旧 Release，仅保留最新 1 个
-      - name: Clean up old Immortalwrt releases
-        if: github.ref == 'refs/heads/main'
-        uses: dev-drprasad/delete-older-releases@v0.3.3
-        with:
-          repo: ${{ github.repository }}
-          keep_latest: 1
-          delete_tag_pattern: "Onecloud-Immortalwrt-*"
-          delete_prerelease_only: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
