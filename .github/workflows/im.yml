@@ -39,6 +39,11 @@ jobs:
           mkdir -p bin files
           sudo chmod -R 777 bin files
 
+          echo "⚙️ 修复 AmlImg 执行权限..."
+          chmod +x ../tool/AmlImg_v0.3.1_linux_amd64 || true
+          file ../tool/AmlImg_v0.3.1_linux_amd64 || true
+          ls -l ../tool
+
       # 4️⃣ 拉取 ImageBuilder 镜像
       - name: Pull Immortalwrt ImageBuilder
         run: docker pull ghcr.io/adjlevis/immortalwrt-imagebuilder:armsr-armv7-latest
