@@ -1,104 +1,77 @@
-name: Onecloud ImmortalWrt eMMC Build
+#!/bin/bash
+set -e
+set -o pipefail
 
-on:
-  workflow_dispatch:
-  schedule:
-    - cron: '0 19 * * *'  # 每日北京时间 03:00 自动构建
+# ============================================================
+# 🚀 OneCloud ImmortalWrt Docker 构建 + Amlogic 线刷镜像打包脚本
+# 基于：
+#   1. ImmortalWrt 官方 ImageBuilder
+#   2. ophub/amlogic-s9xxx-openwrt 打包工具
+# ============================================================
 
-permissions:
-  contents: write
+# ======= 基本变量配置 =======
+DEVICE="onecloud"
+IMAGE_TAG="armsr-armv7-24.10-SNAPSHOT"
+OUTPUT_DIR="$(pwd)/bin"
+ROOTFS_DIR="$(pwd)/bin/rootfs"
+RELEASE_DIR="$(pwd)/bin/release"
+BUILD_TEMP="$(pwd)/build_temp"
+PACKAGES="curl luci luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-app-upnp luci-app-firewall"
+FILES_DIR="$(pwd)/files"
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
+echo "============================================================"
+echo "🚀 OneCloud ImmortalWrt Docker 构建脚本启动"
+echo "============================================================"
+echo "设备: $DEVICE"
+echo "ImageBuilder: $IMAGE_TAG"
+echo "输出目录: $OUTPUT_DIR"
+echo "文件目录: $FILES_DIR"
+echo "============================================================"
+sleep 2
 
-    steps:
-      # 1️⃣ 检出仓库
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+# ======= 准备目录 =======
+mkdir -p "$OUTPUT_DIR" "$ROOTFS_DIR" "$RELEASE_DIR" "$BUILD_TEMP"
 
-      # 2️⃣ 安装构建依赖
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y docker.io git wget curl xz-utils unzip dos2unix
+# ======= 阶段 1：使用 ImageBuilder 构建 rootfs.tar.gz =======
+echo "🔥 [阶段1] 开始使用 ImmortalWrt ImageBuilder 构建 rootfs..."
+docker run --rm -v "$OUTPUT_DIR":/home/build/bin -v "$FILES_DIR":/home/build/files \
+  immortalwrt/imagebuilder:$IMAGE_TAG bash -c "
+    set -eux
+    cd /home/build
+    echo '当前镜像环境：'
+    uname -a
+    PACKAGES=\"$PACKAGES\"
+    make image PROFILE=generic PACKAGES=\"\$PACKAGES\" FILES=files/ EXTRA_IMAGE_NAME=$DEVICE ROOTFS_TAR=y
+    cp -v bin/targets/*/*/*rootfs.tar.gz /home/build/bin/
+"
 
-      # 3️⃣ 拉取 ImmortalWrt ImageBuilder 镜像
-      - name: Pull ImmortalWrt ImageBuilder
-        run: docker pull immortalwrt/imagebuilder:armsr-armv7-24.10-SNAPSHOT
+ROOTFS_PATH=$(ls "$OUTPUT_DIR"/*rootfs.tar.gz | head -n 1 || true)
+if [ ! -f "$ROOTFS_PATH" ]; then
+  echo "❌ 未找到 rootfs.tar.gz，构建失败！"
+  exit 1
+fi
+echo "✅ RootFS 构建成功：$ROOTFS_PATH"
 
-      # 4️⃣ 构建 rootfs.tar.gz
-      - name: Build rootfs with ImageBuilder
-        run: |
-          mkdir -p build_output
-          docker run --rm -v $(pwd)/build_output:/home/build/bin \
-            immortalwrt/imagebuilder:armsr-armv7-24.10-SNAPSHOT bash -c '
-              set -eux
-              PACKAGES="curl luci luci-i18n-base-zh-cn luci-i18n-firewall-zh-cn luci-app-upnp luci-app-firewall"
-              make image PROFILE=generic PACKAGES="$PACKAGES" FILES=files/ EXTRA_IMAGE_NAME=onecloud ROOTFS_TAR=y
-              cp bin/targets/armsr/armv7/*rootfs.tar.gz /home/build/bin/
-            '
-          echo "✅ rootfs 构建完成："
-          ls -lh build_output
+# ======= 阶段 2：使用 Amlogic 工具打包 img =======
+echo "🔥 [阶段2] 使用 ophub/amlogic-s9xxx-openwrt 打包线刷镜像..."
 
-      # 5️⃣ 下载 Amlogic 打包脚本（onhub）
-      - name: Clone amlogic-s9xxx-openwrt
-        run: |
-          git clone https://github.com/onhub/amlogic-s9xxx-openwrt.git
-          cd amlogic-s9xxx-openwrt
-          chmod +x make.sh
+cd "$BUILD_TEMP"
+if [ ! -d "amlogic-s9xxx-openwrt" ]; then
+  git clone https://github.com/ophub/amlogic-s9xxx-openwrt.git
+fi
 
-      # 6️⃣ 使用 Amlogic 工具打包 eMMC 镜像
-      - name: Build Amlogic eMMC image
-        run: |
-          set -eux
-          ROOTFS=$(ls build_output/*rootfs.tar.gz | head -n 1)
-          echo "🔍 使用 rootfs: $ROOTFS"
-          cd amlogic-s9xxx-openwrt
+cd amlogic-s9xxx-openwrt
+chmod +x make.sh
+echo "🔧 调用 make.sh 打包 $DEVICE"
+./make.sh "$DEVICE" "$ROOTFS_PATH"
 
-          # 你可以在这里修改目标设备名称，如 onecloud / s905d / s905x3 等
-          ./make.sh onecloud "$ROOTFS"
+# 输出镜像文件
+mkdir -p "$RELEASE_DIR"
+cp -v out/*img* "$RELEASE_DIR" || true
+cd "$RELEASE_DIR"
+ls -lh
 
-          mkdir -p ../release
-          cp -v out/*img* ../release/
-          cd ..
-          echo "✅ 打包完成："
-          ls -lh release
-
-      # 7️⃣ 上传构建产物
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: onecloud-emmc-images
-          path: release
-          compression-level: 6
-
-      # 8️⃣ 获取北京时间
-      - name: Get Beijing Time
-        id: time
-        run: |
-          export TZ=Asia/Shanghai
-          echo "datetime=$(date '+%Y%m%d-%H%M')" >> $GITHUB_OUTPUT
-          echo "datetime_readable=$(date '+%Y-%m-%d %H:%M:%S %Z')" >> $GITHUB_OUTPUT
-
-      # 9️⃣ 发布到 Release
-      - name: Publish to GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: Onecloud-eMMC-${{ steps.time.outputs.datetime }}
-          name: "OneCloud eMMC Image ${{ steps.time.outputs.datetime }}"
-          body: |
-            ✅ **OneCloud eMMC 固件打包成功！**
-
-            🕓 构建时间：${{ steps.time.outputs.datetime_readable }}
-            💾 包含：
-            - ImmortalWrt rootfs.tar.gz
-            - OneCloud eMMC 可直刷镜像 (.img / .img.gz)
-
-            👉 下载地址：
-            https://github.com/${{ github.repository }}/releases/tag/Onecloud-eMMC-${{ steps.time.outputs.datetime }}
-          files: release/**/*
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+echo "============================================================"
+echo "🎉 构建完成！输出目录内容如下："
+ls -lh "$RELEASE_DIR"
+echo "============================================================"
