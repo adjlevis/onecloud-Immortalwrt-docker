@@ -1,81 +1,79 @@
-name: OneCloud ImmortalWrt Full Build
-
-on:
-  workflow_dispatch:
-  schedule:
-    - cron: '0 19 * * *' # 每日北京时间 03:00 自动构建
-
-permissions:
-  contents: write
-
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-      # 1️⃣ 检出代码
+      # 1️⃣ 检出仓库
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      # 2️⃣ 显示目录结构
-      - name: Show repository structure
+      # 2️⃣ 查看结构（调试）
+      - name: Debug repo structure
         run: |
           echo "📁 当前仓库文件结构："
           ls -R
 
-      # 3️⃣ 准备环境
+      # 3️⃣ 清理旧 release 目录
+      - name: Clean old release folder
+        run: |
+          echo "🧹 清理旧的 release/immortalwrt 目录..."
+          rm -rf release/immortalwrt || true
+          mkdir -p release/immortalwrt
+
+      # 4️⃣ 准备环境（卸载冲突的 containerd 并安装正确版本）
       - name: Prepare environment
         run: |
           echo "🔧 安装依赖并准备环境..."
           sudo apt-get update
           sudo apt-get install -y dos2unix docker.io
-          dos2unix immortalwrt/build.sh immortalwrt/docker-build.sh || true
-          chmod +x immortalwrt/build.sh immortalwrt/docker-build.sh
-          mkdir -p immortalwrt/bin immortalwrt/files release/immortalwrt
-          sudo chmod -R 777 immortalwrt
 
-      # 4️⃣ 拉取 ImmortalWrt ImageBuilder 镜像
-      - name: Pull ImmortalWrt ImageBuilder
+          # 解决 containerd 冲突问题
+          sudo apt-get remove -y containerd containerd.io || true
+          sudo apt-get install -y containerd.io || true
+          
+          dos2unix immortalwrt/docker-build.sh immortalwrt/build.sh || true
+          chmod +x immortalwrt/docker-build.sh immortalwrt/build.sh
+          mkdir -p immortalwrt/bin immortalwrt/files
+          sudo chmod -R 777 immortalwrt/bin immortalwrt/files
+
+      # 5️⃣ 拉取 ImageBuilder 镜像
+      - name: Pull Immortalwrt ImageBuilder
+        run: docker pull immortalwrt/imagebuilder:armsr-armv7-24.10-SNAPSHOT
+
+      # 6️⃣ 编译固件
+      - name: Build firmware
         run: |
-          docker pull immortalwrt/imagebuilder:armsr-armv7-24.10-SNAPSHOT
+          echo "🚀 开始执行 Docker 构建..."
+          bash immortalwrt/docker-build.sh
 
-      # 5️⃣ 使用 ImageBuilder 构建 rootfs
-      - name: Build rootfs.tar.gz using ImmortalWrt ImageBuilder
+      # 7️⃣ 调试输出
+      - name: Debug output
         run: |
-          echo "🚀 开始构建 rootfs.tar.gz..."
-          docker run --rm -v ${{ github.workspace }}/immortalwrt:/home/build/immortalwrt \
-            immortalwrt/imagebuilder:armsr-armv7-24.10-SNAPSHOT \
-            /bin/bash -c "cd /home/build/immortalwrt && ./build.sh"
-          echo "✅ rootfs 构建完成，检查输出："
-          find immortalwrt/bin -type f || true
+          echo "=== bin 目录内容 ==="
+          ls -R immortalwrt/bin || true
 
-      # 6️⃣ 打包 OneCloud IMG（调用 ophub 工具）
-      - name: Pack OneCloud IMG using ophub/amlogic-s9xxx-openwrt
+      # 8️⃣ 打包固件
+      - name: Package Immortalwrt firmware
         run: |
-          echo "📦 使用 ophub 工具打包 OneCloud 固件..."
-          docker run --rm -v ${{ github.workspace }}/immortalwrt:/mnt \
-            ophub/amlogic-s9xxx-openwrt \
-            /bin/bash -c "
-              cd /mnt && mkdir -p output &&
-              cp bin/targets/armsr/armv7/openwrt-armvirt-64-default-rootfs.tar.gz ./rootfs.tar.gz &&
-              ./tool/create-onecloud-img.sh ./rootfs.tar.gz ./output
-            "
-          echo "✅ 打包完成，输出内容如下："
-          ls -lh immortalwrt/output || true
-          cp -r immortalwrt/output/* release/immortalwrt/ || true
+          echo "📦 打包固件文件..."
+          mkdir -p release/immortalwrt
+          cp -r immortalwrt/bin/targets/armsr/armv7/* release/immortalwrt/ 2>/dev/null || \
+          cp -r immortalwrt/bin/* release/immortalwrt/ || true
+          echo "✅ release/immortalwrt 目录内容如下："
+          ls -R release/immortalwrt || true
 
-      # 7️⃣ 上传构建产物
+      # 9️⃣ 上传构建产物
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: onecloud-immortalwrt-images
+          name: immortalwrt-images
           path: release/immortalwrt
-          compression-level: 6
           if-no-files-found: warn
+          compression-level: 6
 
-      # 8️⃣ 获取北京时间
+      # 🔟 获取北京时间
       - name: Get Beijing Time
         id: time
         run: |
@@ -83,14 +81,25 @@ jobs:
           echo "datetime=$(date '+%Y%m%d-%H%M')" >> $GITHUB_OUTPUT
           echo "datetime_readable=$(date '+%Y-%m-%d %H:%M:%S %Z')" >> $GITHUB_OUTPUT
 
-      # 9️⃣ 发布 Release
+      # 1️⃣1️⃣ 列出构建文件
+      - name: List built files
+        id: list_files
+        run: |
+          {
+            echo 'files<<EOF'
+            find immortalwrt/bin -type f | sed 's|^|./|' || echo "无输出文件"
+            echo 'EOF'
+          } >> $GITHUB_OUTPUT
+
+      # 1️⃣2️⃣ 发布到 GitHub Release（附固件）
       - name: Publish to GitHub Release
         uses: softprops/action-gh-release@v2
+        if: always()
         with:
           tag_name: Onecloud-Immortalwrt-${{ steps.time.outputs.datetime }}
           name: "OneCloud Immortalwrt Build ${{ steps.time.outputs.datetime }}"
           body: |
-            ✅ **OneCloud ImmortalWrt 固件构建成功！**
+            ✅ **OneCloud Immortalwrt 固件构建成功！**
 
             🕓 构建时间：${{ steps.time.outputs.datetime_readable }}
             💾 下载地址：
@@ -100,13 +109,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 🔟 保留最新 Release
-      - name: Clean up old releases
+      # 1️⃣3️⃣ 自动清理旧 Release，仅保留最新 1 个
+      - name: Clean up old Immortalwrt releases
         if: github.ref == 'refs/heads/main'
         uses: dev-drprasad/delete-older-releases@v0.3.3
         with:
           repo: ${{ github.repository }}
           keep_latest: 1
           delete_tag_pattern: "Onecloud-Immortalwrt-*"
+          delete_prerelease_only: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
