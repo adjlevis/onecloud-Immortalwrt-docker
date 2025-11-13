@@ -44,7 +44,7 @@ jobs:
 
       # 5️⃣ 拉取 ImageBuilder 镜像
       - name: Pull Immortalwrt ImageBuilder
-        run: docker pull immortalwrt/imagebuilder:armsr-armv7-24.10-SNAPSHOT
+        run: docker pull ghcr.io/adjlevis/immortalwrt-imagebuilder:armsr-armv7-24.10-SNAPSHOT
 
       # 6️⃣ 编译固件
       - name: Build firmware
@@ -124,3 +124,38 @@ jobs:
           delete_prerelease_only: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # 1️⃣4️⃣ 生成 OneCloud 直刷包
+      - name: Create OneCloud burnable image
+        run: |
+          echo "🔥 开始生成 OneCloud eMMC 线刷镜像..."
+          cd release/immortalwrt || exit 1
+
+          ROOTFS_IMG=$(ls *rootfs*.img.gz 2>/dev/null | head -n 1 || true)
+          if [[ -z "$ROOTFS_IMG" ]]; then
+            echo "❌ 未找到 rootfs 镜像 (*.rootfs.img.gz)"
+            ls -lh
+            exit 1
+          fi
+
+          echo "🧩 找到 rootfs 镜像: $ROOTFS_IMG"
+          gunzip -f "$ROOTFS_IMG"
+          ROOTFS_IMG="${ROOTFS_IMG%.gz}"
+
+          TOOL_PATH="../../tool/AmlImg_v0.3.1_linux_amd64"
+          BURN_IMG="../../tool/eMMC.burn.img"
+
+          if [[ ! -x "$TOOL_PATH" ]]; then
+            chmod +x "$TOOL_PATH"
+          fi
+
+          if [[ ! -f "$BURN_IMG" ]]; then
+            echo "❌ 找不到模板 eMMC.burn.img"
+            exit 1
+          fi
+
+          "$TOOL_PATH" -i "$ROOTFS_IMG" -b "$BURN_IMG" -o Onecloud-immortalwrt-emmc-burn.img
+          gzip -f Onecloud-immortalwrt-emmc-burn.img
+
+          echo "✅ 线刷包生成完成："
+          ls -lh
