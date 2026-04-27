@@ -1,4 +1,4 @@
-name: S805-Custom (Use Base Cache)
+name: OneCloudS805(快速定制插件打包固件)
 on:
   workflow_dispatch:
     inputs:
