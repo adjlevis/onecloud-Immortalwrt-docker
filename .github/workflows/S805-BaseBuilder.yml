@@ -1,0 +1,158 @@
+name: onecloud-S805-底包构建(同步官方更新+自动缓存)
+on:
+  # 手动触发 + 每周自动同步官方更新
+  workflow_dispatch:
+    inputs:
+      system:
+        description: '选择系统'
+        required: true
+        default: 'immortalwrt'
+        type: choice
+        options:
+          - openwrt
+          - immortalwrt
+      source_branch:
+        description: '选择源码分支（自动同步官方最新）'
+        required: true
+        default: 'openwrt-24.10'
+        type: choice
+        options:
+          - openwrt-24.10
+          - openwrt-25.00  # 后续官方更新直接加分支名
+      kernel_ver:
+        description: '选择内核系列'
+        required: true
+        default: '6.12'
+        type: choice
+        options:
+          - 6.5
+          - 6.12
+          - 6.18
+  schedule:
+    # 每周日凌晨自动同步官方更新，重建底包
+    - cron: '0 0 * * 0'
+
+env:
+  # 底包缓存唯一标识（系统+分支+内核）
+  CACHE_KEY: s805-base-${{ inputs.system }}-${{ inputs.source_branch }}-k${{ inputs.kernel_ver }}
+  TZ: Asia/Shanghai
+
+jobs:
+  build-base:
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v4
+
+    # 1. 安装编译依赖
+    - name: 安装基础依赖
+      run: |
+        sudo apt update -y
+        sudo apt install -y build-essential libncurses-dev gawk git libssl-dev gettext xsltproc zlib1g-dev unzip python3 python3-pip
+
+    # 2. 同步官方最新源码（强制拉取最新提交）
+    - name: 同步官方最新源码
+      run: |
+        if [ "${{ inputs.system }}" = "immortalwrt" ]; then
+          # 同步Immortalwrt官方最新
+          git clone --depth=1 -b ${{ inputs.source_branch }} https://github.com/immortalwrt/immortalwrt openwrt
+          cd openwrt
+          git pull  # 强制拉取官方最新更新
+        else
+          # 同步OpenWrt官方最新
+          git clone --depth=1 -b ${{ inputs.source_branch }} https://github.com/openwrt/openwrt openwrt
+          cd openwrt
+          git pull  # 强制拉取官方最新更新
+        fi
+
+    # 3. 升级内核 + 更新Feeds（同步官方最新包）
+    - name: 升级内核+同步最新Feeds
+      run: |
+        cd openwrt
+        # 适配内核版本
+        if [ -f "target/linux/armvirt/Makefile" ]; then
+          sed -i "s/^KERNEL_PATCHVER.*/KERNEL_PATCHVER=${{ inputs.kernel_ver }}/" target/linux/armvirt/Makefile
+        else
+          sed -i "s/^KERNEL_PATCHVER.*/KERNEL_PATCHVER=${{ inputs.kernel_ver }}/" target/linux/generic/Makefile
+        fi
+        # 同步官方最新Feeds
+        ./scripts/feeds update -a && ./scripts/feeds install -a
+
+    # 4. 导入底包基础配置（S805+核心组件）
+    - name: 导入底包配置
+      run: |
+        cd openwrt
+        # S805 32位核心配置
+        echo "CONFIG_TARGET_armvirt=y" >> .config
+        echo "CONFIG_TARGET_armvirt_32=y" >> .config
+        echo "CONFIG_TARGET_armvirt_32_Default=y" >> .config
+        echo "CONFIG_ROOTSFS_PARTSIZE=1536" >> .config
+        # 底包核心组件（Docker+Argon+TTYD+中文）
+        echo "CONFIG_PACKAGE_luci-app-ttyd=y" >> .config
+        echo "CONFIG_PACKAGE_luci-theme-argon=y" >> .config
+        echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
+        echo "CONFIG_PACKAGE_docker=y" >> .config
+        echo "CONFIG_PACKAGE_luci-app-dockerman=y" >> .config
+        echo "CONFIG_PACKAGE_block-mount=y" >> .config
+        echo "CONFIG_PACKAGE_e2fsprogs=y" >> .config
+        echo "CONFIG_KERNEL_VERSION=${{ inputs.kernel_ver }}" >> .config
+
+        # 自动IP+默认主题（底包内置）
+        mkdir -p files/etc/config
+        echo "config interface 'loopback'" >> files/etc/config/network
+        echo "        option device 'lo'" >> files/etc/config/network
+        echo "        option proto 'static'" >> files/etc/config/network
+        echo "        option ipaddr '127.0.0.1'" >> files/etc/config/network
+        echo "        option netmask '255.0.0.0'" >> files/etc/config/network
+        echo "" >> files/etc/config/network
+        echo "config globals 'globals'" >> files/etc/config/network
+        echo "        option ula_prefix 'fd51:42f8:caae:9223::/64'" >> files/etc/config/network
+        echo "" >> files/etc/config/network
+        echo "config interface 'lan'" >> files/etc/config/network
+        echo "        option device 'br-lan'" >> files/etc/config/network
+        echo "        option proto 'static'" >> files/etc/config/network
+        echo "        option ipaddr '192.168.2.2'" >> files/etc/config/network
+        echo "        option netmask '255.255.255.0'" >> files/etc/config/network
+        echo "        option gateway '192.168.2.1'" >> files/etc/config/network
+        echo "        option dns '223.5.5.5 114.114.114.114'" >> files/etc/config/network
+        echo "" >> files/etc/config/network
+        echo "config device" >> files/etc/config/network
+        echo "        option name 'br-lan'" >> files/etc/config/network
+        echo "        option type 'bridge'" >> files/etc/config/network
+        echo "        list ports 'eth0'" >> files/etc/config/network
+
+        mkdir -p files/etc/config
+        echo "config core 'main'" >> files/etc/config/luci
+        echo "        option lang 'zh_cn'" >> files/etc/config/luci
+        echo "        option mediaurlbase '/luci-static/argon'" >> files/etc/config/luci
+        echo "        option resourcebase '/luci-static/resources'" >> files/etc/config/luci
+
+    # 5. 生成编译配置
+    - name: 生成底包编译配置
+      run: |
+        cd openwrt
+        make defconfig
+
+    # 6. 编译底包（单线程稳，首次全量编译）
+    - name: 编译S805基础底包
+      run: |
+        cd openwrt
+        make -j1  # 单线程避免官方源码更新导致的编译错误
+
+    # 7. 保存底包缓存（供定制固件复用）
+    - name: 保存底包缓存
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          openwrt/dl          # 依赖包缓存
+          openwrt/staging_dir # 编译环境缓存
+          openwrt/build_dir   # 底包编译产物缓存
+        key: ${{ env.CACHE_KEY }}
+
+    # 8. 上传底包标识（方便定制时选择）
+    - name: 上传底包版本标识
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ env.CACHE_KEY }}-version
+        path: |
+          openwrt/include/version.mk
+          openwrt/bin/targets/armvirt/32/*.manifest
