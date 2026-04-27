@@ -1,108 +1,77 @@
-name: S805-Base (Sync Official Update)
+name: S805-底包构建（同步官方更新）
 on:
   workflow_dispatch:
     inputs:
-      system:
-        description: 'Select System'
+      系统选择:
+        description: '选择固件系统（ImmortalWrt更适配S805）'
         required: true
         default: 'immortalwrt'
         type: choice
         options:
           - openwrt
           - immortalwrt
-      source_branch:
-        description: 'Source Branch'
+      源码分支:
+        description: '选择源码分支'
         required: true
         default: 'openwrt-24.10'
         type: choice
         options:
           - openwrt-24.10
           - openwrt-25.00
-      kernel_ver:
-        description: 'Kernel Version'
-        required: true
-        default: '6.1'  # 注意：内核版本写6.1而非6.12（OpenWrt标准写法）
-        type: choice
-        options:
-          - 5.15
-          - 6.1
-          - 6.6
   schedule:
     - cron: '0 0 * * 0'
 
 env:
-  CACHE_KEY: s805-base-${{ inputs.system }}-${{ inputs.source_branch }}-k${{ inputs.kernel_ver }}
+  缓存标识: s805-base-${{ inputs.系统选择 }}-${{ inputs.源码分支 }}
   TZ: Asia/Shanghai
 
 jobs:
-  build-base:
+  编译底包:
     runs-on: ubuntu-22.04
     steps:
-    - uses: actions/checkout@v4
+    - name: 检出代码
+      uses: actions/checkout@v4
 
-    - name: Install Dependencies
+    - name: 安装编译依赖
       run: |
+        echo "📦 开始安装编译依赖包..."
         sudo apt update -y
         sudo apt install -y build-essential libncurses-dev gawk git libssl-dev gettext xsltproc zlib1g-dev unzip python3 python3-pip
+        echo "✅ 依赖安装完成！"
 
-    - name: Sync Latest Source Code
+    - name: 同步最新源码
       run: |
-        if [ "${{ inputs.system }}" = "immortalwrt" ]; then
-          # 改用immortalwrt针对ARM设备的分支（更适配S805）
-          git clone --depth=1 -b ${{ inputs.source_branch }} https://github.com/immortalwrt/immortalwrt openwrt
+        echo "🔄 开始同步${{ inputs.系统选择 }}源码（分支：${{ inputs.源码分支 }}）..."
+        if [ "${{ inputs.系统选择 }}" = "immortalwrt" ]; then
+          git clone --depth=1 -b ${{ inputs.源码分支 }} https://github.com/immortalwrt/immortalwrt openwrt
           cd openwrt && git pull
         else
-          git clone --depth=1 -b ${{ inputs.source_branch }} https://github.com/openwrt/openwrt openwrt
+          git clone --depth=1 -b ${{ inputs.源码分支 }} https://github.com/openwrt/openwrt openwrt
           cd openwrt && git pull
         fi
+        echo "✅ 源码同步完成！"
 
-    # ========== 核心修复：适配S805的ARM32架构 ==========
-    - name: Update Kernel & Feeds (S805 ARM32)
+    - name: 同步官方插件库（Feeds）
       run: |
+        echo "🔄 开始同步官方插件库..."
         cd openwrt
-        # 定位S805的ARM架构内核配置文件
-        KERNEL_FILE=""
-        # 优先找ARM32目录
-        if [ -d "target/linux/arm" ]; then
-          if [ -f "target/linux/arm/virt/Makefile" ]; then
-            KERNEL_FILE="target/linux/arm/virt/Makefile"
-          elif [ -f "target/linux/arm/generic/Makefile" ]; then
-            KERNEL_FILE="target/linux/arm/generic/Makefile"
-          elif [ -f "target/linux/arm/Makefile" ]; then
-            KERNEL_FILE="target/linux/arm/Makefile"
-          fi
-        # 兼容ARM64
-        elif [ -d "target/linux/aarch64" ]; then
-          KERNEL_FILE="target/linux/aarch64/Makefile"
-        fi
-
-        # 兜底校验
-        if [ -z "$KERNEL_FILE" ] || [ ! -f "$KERNEL_FILE" ]; then
-          echo "❌ 未找到S805适配的ARM内核配置文件！"
-          # 打印所有架构目录，方便排查
-          echo "📌 可用架构目录："
-          ls -l target/linux/
-          exit 1
-        fi
-
-        # 修改内核版本（兼容OpenWrt标准写法：6.1/5.15而非6.12）
-        sed -i -e "s/^KERNEL_PATCHVER.*/KERNEL_PATCHVER=${{ inputs.kernel_ver }}/" \
-               -e "s/^PATCHVER.*/PATCHVER=${{ inputs.kernel_ver }}/" \
-               -e "s/^LINUX_VERSION.*/LINUX_VERSION=${{ inputs.kernel_ver }}.0/" \
-               $KERNEL_FILE
-
-        # 同步Feeds
+        # 只同步插件库，不修改内核（避免找不存在的文件）
         ./scripts/feeds update -a && ./scripts/feeds install -a
+        # 打印架构目录（中文提示）
+        echo "📌 源码内的架构目录列表（方便排查S805适配）："
+        ls -l target/linux/
+        echo "✅ 插件库同步完成！"
 
-    - name: Import Base Config (S805 ARM32)
+    - name: 导入S805基础配置
       run: |
+        echo "⚙️ 开始导入S805适配的基础配置..."
         cd openwrt
-        # 适配ARM32架构的基础配置（替换原来的armvirt）
+        # 核心：S805的ARM32通用架构（替换无效的armvirt）
         echo "CONFIG_TARGET_arm=y" >> .config
-        echo "CONFIG_TARGET_arm_virt=y" >> .config  # ARM32虚拟平台（S805适配）
-        echo "CONFIG_TARGET_arm_virt_Generic=y" >> .config
+        echo "CONFIG_TARGET_arm_generic=y" >> .config
+        echo "CONFIG_TARGET_arm_generic_Generic=y" >> .config
         echo "CONFIG_ROOTSFS_PARTSIZE=1536" >> .config
-        # 核心组件（不变）
+        # 基础插件（必装）
         echo "CONFIG_PACKAGE_luci-app-ttyd=y" >> .config
         echo "CONFIG_PACKAGE_luci-theme-argon=y" >> .config
         echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
@@ -110,9 +79,9 @@ jobs:
         echo "CONFIG_PACKAGE_luci-app-dockerman=y" >> .config
         echo "CONFIG_PACKAGE_block-mount=y" >> .config
         echo "CONFIG_PACKAGE_e2fsprogs=y" >> .config
-        echo "CONFIG_KERNEL_VERSION=${{ inputs.kernel_ver }}" >> .config
 
-        # 网络配置（不变）
+        # 网络配置（固定IP：192.168.2.2）
+        echo "📶 配置网络参数..."
         mkdir -p files/etc/config
         echo "config interface 'loopback'" >> files/etc/config/network
         echo "        option device 'lo'" >> files/etc/config/network
@@ -136,34 +105,41 @@ jobs:
         echo "        option type 'bridge'" >> files/etc/config/network
         echo "        list ports 'eth0'" >> files/etc/config/network
 
-        # 语言配置（不变）
+        # 语言配置（默认中文）
+        echo "🌐 配置默认中文界面..."
         mkdir -p files/etc/config
         echo "config core 'main'" >> files/etc/config/luci
         echo "        option lang 'zh_cn'" >> files/etc/config/luci
         echo "        option mediaurlbase '/luci-static/argon'" >> files/etc/config/luci
         echo "        option resourcebase '/luci-static/resources'" >> files/etc/config/luci
+        echo "✅ S805基础配置导入完成！"
 
-    - name: Generate Config
+    - name: 生成编译配置
       run: |
+        echo "⚙️ 开始生成编译配置文件..."
         cd openwrt && make defconfig
+        echo "✅ 编译配置生成完成！"
 
-    - name: Build Base Firmware
+    - name: 编译S805底包固件
       run: |
+        echo "🔥 开始编译S805底包固件（耗时较长，请耐心等待）..."
         cd openwrt && make -j1
+        echo "✅ S805底包编译完成！"
 
-    - name: Save Base Cache
+    - name: 保存底包缓存（加速后续定制）
       uses: actions/cache/save@v4
       with:
         path: |
           openwrt/dl
           openwrt/staging_dir
           openwrt/build_dir
-        key: ${{ env.CACHE_KEY }}
+        key: ${{ env.缓存标识 }}
+      continue-on-error: true  # 缓存失败不影响固件编译
 
-    - name: Upload Version Info
+    - name: 上传版本信息（方便核对）
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ env.CACHE_KEY }}-version
+        name: ${{ env.缓存标识 }}-版本信息
         path: |
           openwrt/include/version.mk
-          openwrt/bin/targets/arm/virt/*.manifest  # 适配ARM32输出路径
+          openwrt/bin/targets/arm/generic/*.manifest
