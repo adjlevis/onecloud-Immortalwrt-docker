@@ -1,10 +1,10 @@
-name: S805-底包构建（同步官方更新）
+# S805 底包构建｜仅同步上游稳定内核｜手动/自动内核选择
+name: S805-BaseBuild
 on:
   workflow_dispatch:
     inputs:
-      # 参数名用英文，描述用中文（符合语法）
       system:
-        description: '选择固件系统（ImmortalWrt更适配S805）'
+        description: '固件系统（ImmortalWrt 适配S805更好）'
         required: true
         default: 'immortalwrt'
         type: choice
@@ -12,135 +12,209 @@ on:
           - openwrt
           - immortalwrt
       branch:
-        description: '选择源码分支'
+        description: '源码分支（建议选release分支）'
         required: true
         default: 'openwrt-24.10'
         type: choice
         options:
-          - openwrt-24.10
-          - openwrt-25.00
-  schedule:
-    - cron: '0 0 * * 0'
+          - openwrt-24.10  # 稳定分支
+          - openwrt-25.00  # 稳定分支
+      kernel_ver:
+        description: '内核版本（auto=上游稳定版）'
+        required: true
+        default: 'auto'
+        type: choice
+        options:
+          - auto          # 仅同步上游稳定内核
+          - 5.15          # LTS稳定版
+          - 6.1           # LTS稳定版
+          - 6.6           # LTS稳定版
+          - 6.12          # 测试版（需验证）
+          - 6.18          # 测试版（需验证）
+      sync_latest:
+        description: '是否同步最新源码（仅稳定版生效）'
+        required: true
+        default: 'yes'
+        type: choice
+        options:
+          - yes
+          - no
 
 env:
-  # 环境变量名用英文
-  CACHE_KEY: s805-base-${{ inputs.system }}-${{ inputs.branch }}
+  CACHE_KEY: s805-${{ inputs.system }}-${{ inputs.branch }}-k${{ inputs.kernel_ver }}
   TZ: Asia/Shanghai
+  # 定义上游官方稳定内核列表（可根据官方更新调整）
+  STABLE_KERNELS: "5.15 6.1 6.6"
 
 jobs:
-  # Job名用英文（语法要求）
-  build_base:
+  build:
     runs-on: ubuntu-22.04
     steps:
-    - name: 检出代码
-      uses: actions/checkout@v4
+      # 1. 拉取仓库代码
+      - uses: actions/checkout@v4
 
-    - name: 安装编译依赖
-      run: |
-        echo "📦 开始安装编译依赖包..."
-        sudo apt update -y
-        sudo apt install -y build-essential libncurses-dev gawk git libssl-dev gettext xsltproc zlib1g-dev unzip python3 python3-pip
-        echo "✅ 依赖安装完成！"
+      # 2. 安装编译依赖
+      - name: 安装编译依赖
+        run: |
+          sudo apt update -y
+          sudo apt install -y build-essential libncurses-dev gawk git libssl-dev gettext xsltproc zlib1g-dev unzip python3 python3-pip
 
-    - name: 同步最新源码
-      run: |
-        echo "🔄 开始同步${{ inputs.system }}源码（分支：${{ inputs.branch }}）..."
-        if [ "${{ inputs.system }}" = "immortalwrt" ]; then
-          git clone --depth=1 -b ${{ inputs.branch }} https://github.com/immortalwrt/immortalwrt openwrt
-          cd openwrt && git pull
-        else
-          git clone --depth=1 -b ${{ inputs.branch }} https://github.com/openwrt/openwrt openwrt
-          cd openwrt && git pull
-        fi
-        echo "✅ 源码同步完成！"
+      # 3. 克隆源码（先拉取基础版本，暂不同步最新）
+      - name: 克隆基础源码
+        run: |
+          # 克隆指定系统/分支的基础源码
+          if [ "${{ inputs.system }}" = "immortalwrt" ]; then
+            git clone -b ${{ inputs.branch }} https://github.com/immortalwrt/immortalwrt openwrt
+          else
+            git clone -b ${{ inputs.branch }} https://github.com/openwrt/openwrt openwrt
+          fi
+          cd openwrt
+          # 记录基础版本哈希（用于回滚）
+          git rev-parse HEAD > base_commit.hash
+          echo "基础源码版本：$(cat base_commit.hash)"
 
-    - name: 同步官方插件库（Feeds）
-      run: |
-        echo "🔄 开始同步官方插件库..."
-        cd openwrt
-        ./scripts/feeds update -a && ./scripts/feeds install -a
-        echo "📌 源码内的架构目录列表（方便排查S805适配）："
-        ls -l target/linux/
-        echo "✅ 插件库同步完成！"
+      # 4. 上游内核稳定性校验 + 条件同步最新代码
+      - name: 校验内核稳定性并同步最新代码
+        run: |
+          cd openwrt
+          # 步骤1：获取上游默认内核版本
+          KERNEL_FILE="target/linux/arm/generic/Makefile"
+          [ ! -f "$KERNEL_FILE" ] && KERNEL_FILE="target/linux/arm/Makefile"
+          UPSTREAM_KERNEL=$(grep -E "^KERNEL_PATCHVER" "$KERNEL_FILE" | awk -F'=' '{print $2}' | tr -d ' ')
+          echo "上游源码当前内核版本：$UPSTREAM_KERNEL"
 
-    - name: 导入S805基础配置
-      run: |
-        echo "⚙️ 开始导入S805适配的基础配置..."
-        cd openwrt
-        # S805的ARM32通用架构
-        echo "CONFIG_TARGET_arm=y" >> .config
-        echo "CONFIG_TARGET_arm_generic=y" >> .config
-        echo "CONFIG_TARGET_arm_generic_Generic=y" >> .config
-        echo "CONFIG_ROOTSFS_PARTSIZE=1536" >> .config
-        # 基础插件
-        echo "CONFIG_PACKAGE_luci-app-ttyd=y" >> .config
-        echo "CONFIG_PACKAGE_luci-theme-argon=y" >> .config
-        echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
-        echo "CONFIG_PACKAGE_docker=y" >> .config
-        echo "CONFIG_PACKAGE_luci-app-dockerman=y" >> .config
-        echo "CONFIG_PACKAGE_block-mount=y" >> .config
-        echo "CONFIG_PACKAGE_e2fsprogs=y" >> .config
+          # 步骤2：校验上游内核是否在稳定列表中
+          if [[ " $STABLE_KERNELS " =~ " $UPSTREAM_KERNEL " ]]; then
+            echo "✅ 上游内核$UPSTREAM_KERNEL属于稳定版，允许同步最新代码"
+            # 仅当选择同步最新 + 内核稳定时，才拉取最新代码
+            if [ "${{ inputs.sync_latest }}" = "yes" ]; then
+              git pull
+              echo "✅ 已同步上游最新稳定代码，版本：$(git rev-parse HEAD)"
+            else
+              echo "ℹ️ 未选择同步最新代码，使用基础版本"
+            fi
+          else
+            echo "❌ 上游内核$UPSTREAM_KERNEL非稳定版，拒绝同步最新代码"
+            echo "❌ 终止构建流程，避免打包错误内核"
+            exit 1  # 终止工作流，不继续编译
+          fi
 
-        # 网络配置（固定IP：192.168.2.2）
-        echo "📶 配置网络参数..."
-        mkdir -p files/etc/config
-        echo "config interface 'loopback'" >> files/etc/config/network
-        echo "        option device 'lo'" >> files/etc/config/network
-        echo "        option proto 'static'" >> files/etc/config/network
-        echo "        option ipaddr '127.0.0.1'" >> files/etc/config/network
-        echo "        option netmask '255.0.0.0'" >> files/etc/config/network
-        echo "" >> files/etc/config/network
-        echo "config globals 'globals'" >> files/etc/config/network
-        echo "        option ula_prefix 'fd51:42f8:caae:9223::/64'" >> files/etc/config/network
-        echo "" >> files/etc/config/network
-        echo "config interface 'lan'" >> files/etc/config/network
-        echo "        option device 'br-lan'" >> files/etc/config/network
-        echo "        option proto 'static'" >> files/etc/config/network
-        echo "        option ipaddr '192.168.2.2'" >> files/etc/config/network
-        echo "        option netmask '255.255.255.0'" >> files/etc/config/network
-        echo "        option gateway '192.168.2.1'" >> files/etc/config/network
-        echo "        option dns '223.5.5.5 114.114.114.114'" >> files/etc/config/network
-        echo "" >> files/etc/config/network
-        echo "config device" >> files/etc/config/network
-        echo "        option name 'br-lan'" >> files/etc/config/network
-        echo "        option type 'bridge'" >> files/etc/config/network
-        echo "        list ports 'eth0'" >> files/etc/config/network
+      # 5. 内核版本选择（auto=上游稳定版，手动=验证是否稳定）
+      - name: 验证并写入内核版本
+        run: |
+          cd openwrt
+          KERNEL_FILE="target/linux/arm/generic/Makefile"
+          [ ! -f "$KERNEL_FILE" ] && KERNEL_FILE="target/linux/arm/Makefile"
+          UPSTREAM_KERNEL=$(grep -E "^KERNEL_PATCHVER" "$KERNEL_FILE" | awk -F'=' '{print $2}' | tr -d ' ')
 
-        # 语言配置（默认中文）
-        echo "🌐 配置默认中文界面..."
-        mkdir -p files/etc/config
-        echo "config core 'main'" >> files/etc/config/luci
-        echo "        option lang 'zh_cn'" >> files/etc/config/luci
-        echo "        option mediaurlbase '/luci-static/argon'" >> files/etc/config/luci
-        echo "        option resourcebase '/luci-static/resources'" >> files/etc/config/luci
-        echo "✅ S805基础配置导入完成！"
+          # 步骤1：确定目标内核版本
+          if [ "${{ inputs.kernel_ver }}" = "auto" ]; then
+            TARGET_KERNEL=$UPSTREAM_KERNEL
+            echo "✅ 自动选择上游稳定内核：$TARGET_KERNEL"
+          else
+            TARGET_KERNEL=${{ inputs.kernel_ver }}
+            # 校验手动选择的内核是否稳定
+            if [[ " $STABLE_KERNELS " =~ " $TARGET_KERNEL " ]]; then
+              echo "✅ 手动选择的内核$TARGET_KERNEL属于稳定版，允许使用"
+            else
+              echo "❌ 手动选择的内核$TARGET_KERNEL非稳定版，终止构建"
+              exit 1
+            fi
+          fi
 
-    - name: 生成编译配置
-      run: |
-        echo "⚙️ 开始生成编译配置文件..."
-        cd openwrt && make defconfig
-        echo "✅ 编译配置生成完成！"
+          # 步骤2：写入目标内核版本（兼容上游格式）
+          sed -i "s/^KERNEL_PATCHVER.*/KERNEL_PATCHVER=$TARGET_KERNEL/" "$KERNEL_FILE"
+          FINAL_KERNEL=$(grep -E "^KERNEL_PATCHVER" "$KERNEL_FILE" | awk -F'=' '{print $2}' | tr -d ' ')
+          echo "✅ 最终写入内核版本：$FINAL_KERNEL"
 
-    - name: 编译S805底包固件
-      run: |
-        echo "🔥 开始编译S805底包固件（耗时较长，请耐心等待）..."
-        cd openwrt && make -j1
-        echo "✅ S805底包编译完成！"
+      # 6. 预编译校验（检查内核配置是否有错误）
+      - name: 预编译内核配置校验
+        run: |
+          cd openwrt
+          # 检查内核配置是否合法，有错误则终止
+          if ! make kernel_oldconfig > kernel_check.log 2>&1; then
+            echo "❌ 内核配置存在错误，日志如下："
+            cat kernel_check.log
+            exit 1
+          fi
+          echo "✅ 内核配置校验通过，无错误"
 
-    - name: 保存底包缓存（加速后续定制）
-      uses: actions/cache/save@v4
-      with:
-        path: |
-          openwrt/dl
-          openwrt/staging_dir
-          openwrt/build_dir
-        key: ${{ env.CACHE_KEY }}
-      continue-on-error: true
+      # 7. 更新插件源（仅稳定版执行）
+      - name: 更新Feeds插件库
+        run: |
+          cd openwrt
+          ./scripts/feeds update -a
+          ./scripts/feeds install -a
 
-    - name: 上传版本信息（方便核对）
-      uses: actions/upload-artifact@v4
-      with:
-        name: ${{ env.CACHE_KEY }}-版本信息
-        path: |
-          openwrt/include/version.mk
-          openwrt/bin/targets/arm/generic/*.manifest
+      # 8. 导入S805固化配置（无EOF，纯printf避免红线）
+      - name: 导入S805硬件配置
+        run: |
+          cd openwrt
+          # 写入核心架构/插件配置
+          echo -e "CONFIG_TARGET_arm=y\nCONFIG_TARGET_arm_generic=y\nCONFIG_TARGET_arm_generic_Generic=y\nCONFIG_ROOTSFS_PARTSIZE=1536\nCONFIG_PACKAGE_luci-app-ttyd=y\nCONFIG_PACKAGE_luci-theme-argon=y\nCONFIG_PACKAGE_luci-i18n-base-zh-cn=y\nCONFIG_PACKAGE_docker=y\nCONFIG_PACKAGE_luci-app-dockerman=y\nCONFIG_PACKAGE_block-mount=y\nCONFIG_PACKAGE_e2fsprogs=y" >> .config
+          
+          # 创建配置目录
+          mkdir -p files/etc/config
+          
+          # 写入网络配置（printf避免EOF语法错误）
+          printf '%s\n' \
+            'config interface "loopback"' \
+            '    option device "lo"' \
+            '    option proto "static"' \
+            '    option ipaddr "127.0.0.1"' \
+            '    option netmask "255.0.0.0"' \
+            'config globals "globals"' \
+            '    option ula_prefix "fd51:42f8:caae:9223::/64"' \
+            'config interface "lan"' \
+            '    option device "br-lan"' \
+            '    option proto "static"' \
+            '    option ipaddr "192.168.2.2"' \
+            '    option netmask "255.255.255.0"' \
+            '    option gateway "192.168.2.1"' \
+            '    option dns "223.5.5.5 114.114.114.114"' \
+            'config device' \
+            '    option name "br-lan"' \
+            '    option type "bridge"' \
+            '    list ports "eth0"' \
+            > files/etc/config/network
+
+          # 写入Luci语言配置
+          printf '%s\n' \
+            'config core "main"' \
+            '    option lang "zh_cn"' \
+            '    option mediaurlbase "/luci-static/argon"' \
+            '    option resourcebase "/luci-static/resources"' \
+            > files/etc/config/luci
+
+      # 9. 生成编译配置
+      - name: 生成编译默认配置
+        run: |
+          cd openwrt
+          make defconfig
+
+      # 10. 编译固件（多线程+日志保存）
+      - name: 编译S805底包固件
+        run: |
+          cd openwrt
+          make -j$(nproc) V=s 2>&1 | tee compile.log
+
+      # 11. 保存编译缓存（加速后续构建）
+      - name: 保存编译缓存
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            openwrt/dl
+            openwrt/staging_dir
+            openwrt/build_dir
+          key: ${{ env.CACHE_KEY }}
+        continue-on-error: true
+
+      # 12. 上传固件+日志
+      - name: 上传固件与编译日志
+        uses: actions/upload-artifact@v4
+        with:
+          name: S805-${{ env.CACHE_KEY }}-${{ github.run_id }}
+          path: |
+            openwrt/bin/targets/arm/generic/*.img.gz
+            openwrt/compile.log
+            openwrt/kernel_check.log  # 上传内核校验日志，方便排查
