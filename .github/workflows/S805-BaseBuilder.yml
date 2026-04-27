@@ -1,10 +1,9 @@
-name: onecloud-S805-底包构建(同步官方更新+自动缓存)
+name: S805-Base 底包(Sync Official Update)
 on:
-  # 手动触发 + 每周自动同步官方更新
   workflow_dispatch:
     inputs:
       system:
-        description: '选择系统'
+        description: 'Select System'
         required: true
         default: 'immortalwrt'
         type: choice
@@ -12,15 +11,15 @@ on:
           - openwrt
           - immortalwrt
       source_branch:
-        description: '选择源码分支（自动同步官方最新）'
+        description: 'Source Branch'
         required: true
         default: 'openwrt-24.10'
         type: choice
         options:
           - openwrt-24.10
-          - openwrt-25.00  # 后续官方更新直接加分支名
+          - openwrt-25.00
       kernel_ver:
-        description: '选择内核系列'
+        description: 'Kernel Version'
         required: true
         default: '6.12'
         type: choice
@@ -29,11 +28,9 @@ on:
           - 6.12
           - 6.18
   schedule:
-    # 每周日凌晨自动同步官方更新，重建底包
     - cron: '0 0 * * 0'
 
 env:
-  # 底包缓存唯一标识（系统+分支+内核）
   CACHE_KEY: s805-base-${{ inputs.system }}-${{ inputs.source_branch }}-k${{ inputs.kernel_ver }}
   TZ: Asia/Shanghai
 
@@ -43,50 +40,51 @@ jobs:
     steps:
     - uses: actions/checkout@v4
 
-    # 1. 安装编译依赖
-    - name: 安装基础依赖
+    - name: Install Dependencies
       run: |
         sudo apt update -y
         sudo apt install -y build-essential libncurses-dev gawk git libssl-dev gettext xsltproc zlib1g-dev unzip python3 python3-pip
 
-    # 2. 同步官方最新源码（强制拉取最新提交）
-    - name: 同步官方最新源码
+    - name: Sync Latest Source Code
       run: |
         if [ "${{ inputs.system }}" = "immortalwrt" ]; then
-          # 同步Immortalwrt官方最新
           git clone --depth=1 -b ${{ inputs.source_branch }} https://github.com/immortalwrt/immortalwrt openwrt
-          cd openwrt
-          git pull  # 强制拉取官方最新更新
+          cd openwrt && git pull
         else
-          # 同步OpenWrt官方最新
           git clone --depth=1 -b ${{ inputs.source_branch }} https://github.com/openwrt/openwrt openwrt
-          cd openwrt
-          git pull  # 强制拉取官方最新更新
+          cd openwrt && git pull
         fi
 
-    # 3. 升级内核 + 更新Feeds（同步官方最新包）
-    - name: 升级内核+同步最新Feeds
+    # ========== 修复核心：精准修改armvirt内核版本 ==========
+    - name: Update Kernel & Feeds
       run: |
         cd openwrt
-        # 适配内核版本
+        # 定位armvirt架构的内核配置文件
+        KERNEL_FILE=""
         if [ -f "target/linux/armvirt/Makefile" ]; then
-          sed -i "s/^KERNEL_PATCHVER.*/KERNEL_PATCHVER=${{ inputs.kernel_ver }}/" target/linux/armvirt/Makefile
+          KERNEL_FILE="target/linux/armvirt/Makefile"
+        elif [ -f "target/linux/armvirt/Makefile.version" ]; then
+          KERNEL_FILE="target/linux/armvirt/Makefile.version"
         else
-          sed -i "s/^KERNEL_PATCHVER.*/KERNEL_PATCHVER=${{ inputs.kernel_ver }}/" target/linux/generic/Makefile
+          echo "❌ 未找到armvirt架构的内核配置文件！"
+          exit 1
         fi
-        # 同步官方最新Feeds
+
+        # 兼容KERNEL_PATCHVER/PATCHVER两种写法，修改为指定内核版本
+        sed -i -e "s/^KERNEL_PATCHVER.*/KERNEL_PATCHVER=${{ inputs.kernel_ver }}/" \
+               -e "s/^PATCHVER.*/PATCHVER=${{ inputs.kernel_ver }}/" \
+               $KERNEL_FILE
+
+        # 同步Feeds并安装
         ./scripts/feeds update -a && ./scripts/feeds install -a
 
-    # 4. 导入底包基础配置（S805+核心组件）
-    - name: 导入底包配置
+    - name: Import Base Config
       run: |
         cd openwrt
-        # S805 32位核心配置
         echo "CONFIG_TARGET_armvirt=y" >> .config
         echo "CONFIG_TARGET_armvirt_32=y" >> .config
         echo "CONFIG_TARGET_armvirt_32_Default=y" >> .config
         echo "CONFIG_ROOTSFS_PARTSIZE=1536" >> .config
-        # 底包核心组件（Docker+Argon+TTYD+中文）
         echo "CONFIG_PACKAGE_luci-app-ttyd=y" >> .config
         echo "CONFIG_PACKAGE_luci-theme-argon=y" >> .config
         echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
@@ -96,7 +94,6 @@ jobs:
         echo "CONFIG_PACKAGE_e2fsprogs=y" >> .config
         echo "CONFIG_KERNEL_VERSION=${{ inputs.kernel_ver }}" >> .config
 
-        # 自动IP+默认主题（底包内置）
         mkdir -p files/etc/config
         echo "config interface 'loopback'" >> files/etc/config/network
         echo "        option device 'lo'" >> files/etc/config/network
@@ -126,30 +123,24 @@ jobs:
         echo "        option mediaurlbase '/luci-static/argon'" >> files/etc/config/luci
         echo "        option resourcebase '/luci-static/resources'" >> files/etc/config/luci
 
-    # 5. 生成编译配置
-    - name: 生成底包编译配置
+    - name: Generate Config
       run: |
-        cd openwrt
-        make defconfig
+        cd openwrt && make defconfig
 
-    # 6. 编译底包（单线程稳，首次全量编译）
-    - name: 编译S805基础底包
+    - name: Build Base Firmware
       run: |
-        cd openwrt
-        make -j1  # 单线程避免官方源码更新导致的编译错误
+        cd openwrt && make -j1
 
-    # 7. 保存底包缓存（供定制固件复用）
-    - name: 保存底包缓存
+    - name: Save Base Cache
       uses: actions/cache/save@v4
       with:
         path: |
-          openwrt/dl          # 依赖包缓存
-          openwrt/staging_dir # 编译环境缓存
-          openwrt/build_dir   # 底包编译产物缓存
+          openwrt/dl
+          openwrt/staging_dir
+          openwrt/build_dir
         key: ${{ env.CACHE_KEY }}
 
-    # 8. 上传底包标识（方便定制时选择）
-    - name: 上传底包版本标识
+    - name: Upload Version Info
       uses: actions/upload-artifact@v4
       with:
         name: ${{ env.CACHE_KEY }}-version
