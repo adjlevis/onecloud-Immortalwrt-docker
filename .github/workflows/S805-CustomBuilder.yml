@@ -1,0 +1,154 @@
+name: S805-固件定制(复用底包+极速编译插件)
+on:
+  workflow_dispatch:
+    inputs:
+      # 选择要复用的底包（和底包工作流的参数完全对应）
+      base_system:
+        description: '选择底包系统（和底包一致）'
+        required: true
+        default: 'immortalwrt'
+        type: choice
+        options:
+          - openwrt
+          - immortalwrt
+      base_branch:
+        description: '选择底包分支（和底包一致）'
+        required: true
+        default: 'openwrt-24.10'
+        type: choice
+        options:
+          - openwrt-24.10
+          - openwrt-25.00
+      base_kernel:
+        description: '选择底包内核（和底包一致）'
+        required: true
+        default: '6.12'
+        type: choice
+        options:
+          - 6.5
+          - 6.12
+          - 6.18
+      # 自定义插件（空格分隔，比如：luci-app-openclash luci-app-samba）
+      custom_plugins:
+        description: '定制插件（多个用空格分隔，空则输出底包固件）'
+        required: false
+        default: ''
+
+env:
+  # 匹配底包缓存标识
+  CACHE_KEY: s805-base-${{ inputs.base_system }}-${{ inputs.base_branch }}-k${{ inputs.base_kernel }}
+  TZ: Asia/Shanghai
+
+jobs:
+  custom-build:
+    runs-on: ubuntu-22.04
+    steps:
+    - uses: actions/checkout@v4
+
+    # 1. 恢复底包缓存（核心：复用已编译的底包，不重复编译内核）
+    - name: 恢复底包缓存
+      uses: actions/cache/restore@v4
+      id: restore-base
+      with:
+        path: |
+          openwrt/dl
+          openwrt/staging_dir
+          openwrt/build_dir
+        key: ${{ env.CACHE_KEY }}
+      # 底包不存在则终止，提示先构建底包
+      if: ${{ failure() }}
+      run: |
+        echo "错误：未找到指定的底包（${{ env.CACHE_KEY }}），请先运行「S805-底包构建」工作流生成底包！"
+        exit 1
+
+    # 2. 安装基础依赖（仅补装缺失的工具）
+    - name: 安装极简依赖
+      run: |
+        sudo apt update -y
+        sudo apt install -y git make gcc
+
+    # 3. 重新拉取源码（仅同步目录结构，复用缓存）
+    - name: 拉取源码骨架
+      run: |
+        if [ "${{ inputs.base_system }}" = "immortalwrt" ]; then
+          git clone --depth=1 -b ${{ inputs.base_branch }} https://github.com/immortalwrt/immortalwrt openwrt
+        else
+          git clone --depth=1 -b ${{ inputs.base_branch }} https://github.com/openwrt/openwrt openwrt
+        fi
+        cd openwrt
+        ./scripts/feeds update -a && ./scripts/feeds install -a
+
+    # 4. 导入底包配置 + 追加定制插件
+    - name: 导入配置+追加定制插件
+      run: |
+        cd openwrt
+        # 重新导入底包基础配置
+        echo "CONFIG_TARGET_armvirt=y" >> .config
+        echo "CONFIG_TARGET_armvirt_32=y" >> .config
+        echo "CONFIG_TARGET_armvirt_32_Default=y" >> .config
+        echo "CONFIG_ROOTSFS_PARTSIZE=1536" >> .config
+        echo "CONFIG_PACKAGE_luci-app-ttyd=y" >> .config
+        echo "CONFIG_PACKAGE_luci-theme-argon=y" >> .config
+        echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
+        echo "CONFIG_PACKAGE_docker=y" >> .config
+        echo "CONFIG_PACKAGE_luci-app-dockerman=y" >> .config
+        echo "CONFIG_PACKAGE_block-mount=y" >> .config
+        echo "CONFIG_PACKAGE_e2fsprogs=y" >> .config
+        echo "CONFIG_KERNEL_VERSION=${{ inputs.base_kernel }}" >> .config
+
+        # 追加用户定制插件
+        if [ -n "${{ inputs.custom_plugins }}" ]; then
+          for plugin in ${{ inputs.custom_plugins }}; do
+            echo "CONFIG_PACKAGE_$plugin=y" >> .config
+            # 自动安装插件依赖
+            ./scripts/feeds install $plugin
+          done
+        fi
+
+        # 保留自动IP+默认主题配置
+        mkdir -p files/etc/config
+        echo "config interface 'loopback'" >> files/etc/config/network
+        echo "        option device 'lo'" >> files/etc/config/network
+        echo "        option proto 'static'" >> files/etc/config/network
+        echo "        option ipaddr '127.0.0.1'" >> files/etc/config/network
+        echo "        option netmask '255.0.0.0'" >> files/etc/config/network
+        echo "" >> files/etc/config/network
+        echo "config globals 'globals'" >> files/etc/config/network
+        echo "        option ula_prefix 'fd51:42f8:caae:9223::/64'" >> files/etc/config/network
+        echo "" >> files/etc/config/network
+        echo "config interface 'lan'" >> files/etc/config/network
+        echo "        option device 'br-lan'" >> files/etc/config/network
+        echo "        option proto 'static'" >> files/etc/config/network
+        echo "        option ipaddr '192.168.2.2'" >> files/etc/config/network
+        echo "        option netmask '255.255.255.0'" >> files/etc/config/network
+        echo "        option gateway '192.168.2.1'" >> files/etc/config/network
+        echo "        option dns '223.5.5.5 114.114.114.114'" >> files/etc/config/network
+        echo "" >> files/etc/config/network
+        echo "config device" >> files/etc/config/network
+        echo "        option name 'br-lan'" >> files/etc/config/network
+        echo "        option type 'bridge'" >> files/etc/config/network
+        echo "        list ports 'eth0'" >> files/etc/config/network
+
+        mkdir -p files/etc/config
+        echo "config core 'main'" >> files/etc/config/luci
+        echo "        option lang 'zh_cn'" >> files/etc/config/luci
+        echo "        option mediaurlbase '/luci-static/argon'" >> files/etc/config/luci
+        echo "        option resourcebase '/luci-static/resources'" >> files/etc/config/luci
+
+    # 5. 极速编译（仅编译定制插件，复用底包）
+    - name: 极速编译定制固件
+      run: |
+        cd openwrt
+        make defconfig
+        # 仅编译新增插件，跳过内核/基础组件
+        make -j$(nproc) package/compile V=s
+        # 打包最终固件
+        make -j$(nproc) target/compile V=s
+        make -j$(nproc) image V=s
+
+    # 6. 上传定制固件
+    - name: 上传定制固件
+      uses: actions/upload-artifact@v4
+      with:
+        name: s805-custom-${{ inputs.base_system }}-${{ inputs.base_branch }}-k${{ inputs.base_kernel }}-plugins[${{ inputs.custom_plugins }}]
+        path: openwrt/bin/targets/armvirt/32/*.img.gz
