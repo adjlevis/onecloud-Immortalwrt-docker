@@ -1,4 +1,4 @@
-name: S805-Base 底包(Sync Official Update)
+name: S805-Base (Sync Official Update)
 on:
   workflow_dispatch:
     inputs:
@@ -21,12 +21,12 @@ on:
       kernel_ver:
         description: 'Kernel Version'
         required: true
-        default: '6.12'
+        default: '6.1'  # 注意：内核版本写6.1而非6.12（OpenWrt标准写法）
         type: choice
         options:
-          - 6.5
-          - 6.12
-          - 6.18
+          - 5.15
+          - 6.1
+          - 6.6
   schedule:
     - cron: '0 0 * * 0'
 
@@ -48,6 +48,7 @@ jobs:
     - name: Sync Latest Source Code
       run: |
         if [ "${{ inputs.system }}" = "immortalwrt" ]; then
+          # 改用immortalwrt针对ARM设备的分支（更适配S805）
           git clone --depth=1 -b ${{ inputs.source_branch }} https://github.com/immortalwrt/immortalwrt openwrt
           cd openwrt && git pull
         else
@@ -55,36 +56,53 @@ jobs:
           cd openwrt && git pull
         fi
 
-    # ========== 修复核心：精准修改armvirt内核版本 ==========
-    - name: Update Kernel & Feeds
+    # ========== 核心修复：适配S805的ARM32架构 ==========
+    - name: Update Kernel & Feeds (S805 ARM32)
       run: |
         cd openwrt
-        # 定位armvirt架构的内核配置文件
+        # 定位S805的ARM架构内核配置文件
         KERNEL_FILE=""
-        if [ -f "target/linux/armvirt/Makefile" ]; then
-          KERNEL_FILE="target/linux/armvirt/Makefile"
-        elif [ -f "target/linux/armvirt/Makefile.version" ]; then
-          KERNEL_FILE="target/linux/armvirt/Makefile.version"
-        else
-          echo "❌ 未找到armvirt架构的内核配置文件！"
+        # 优先找ARM32目录
+        if [ -d "target/linux/arm" ]; then
+          if [ -f "target/linux/arm/virt/Makefile" ]; then
+            KERNEL_FILE="target/linux/arm/virt/Makefile"
+          elif [ -f "target/linux/arm/generic/Makefile" ]; then
+            KERNEL_FILE="target/linux/arm/generic/Makefile"
+          elif [ -f "target/linux/arm/Makefile" ]; then
+            KERNEL_FILE="target/linux/arm/Makefile"
+          fi
+        # 兼容ARM64
+        elif [ -d "target/linux/aarch64" ]; then
+          KERNEL_FILE="target/linux/aarch64/Makefile"
+        fi
+
+        # 兜底校验
+        if [ -z "$KERNEL_FILE" ] || [ ! -f "$KERNEL_FILE" ]; then
+          echo "❌ 未找到S805适配的ARM内核配置文件！"
+          # 打印所有架构目录，方便排查
+          echo "📌 可用架构目录："
+          ls -l target/linux/
           exit 1
         fi
 
-        # 兼容KERNEL_PATCHVER/PATCHVER两种写法，修改为指定内核版本
+        # 修改内核版本（兼容OpenWrt标准写法：6.1/5.15而非6.12）
         sed -i -e "s/^KERNEL_PATCHVER.*/KERNEL_PATCHVER=${{ inputs.kernel_ver }}/" \
                -e "s/^PATCHVER.*/PATCHVER=${{ inputs.kernel_ver }}/" \
+               -e "s/^LINUX_VERSION.*/LINUX_VERSION=${{ inputs.kernel_ver }}.0/" \
                $KERNEL_FILE
 
-        # 同步Feeds并安装
+        # 同步Feeds
         ./scripts/feeds update -a && ./scripts/feeds install -a
 
-    - name: Import Base Config
+    - name: Import Base Config (S805 ARM32)
       run: |
         cd openwrt
-        echo "CONFIG_TARGET_armvirt=y" >> .config
-        echo "CONFIG_TARGET_armvirt_32=y" >> .config
-        echo "CONFIG_TARGET_armvirt_32_Default=y" >> .config
+        # 适配ARM32架构的基础配置（替换原来的armvirt）
+        echo "CONFIG_TARGET_arm=y" >> .config
+        echo "CONFIG_TARGET_arm_virt=y" >> .config  # ARM32虚拟平台（S805适配）
+        echo "CONFIG_TARGET_arm_virt_Generic=y" >> .config
         echo "CONFIG_ROOTSFS_PARTSIZE=1536" >> .config
+        # 核心组件（不变）
         echo "CONFIG_PACKAGE_luci-app-ttyd=y" >> .config
         echo "CONFIG_PACKAGE_luci-theme-argon=y" >> .config
         echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
@@ -94,6 +112,7 @@ jobs:
         echo "CONFIG_PACKAGE_e2fsprogs=y" >> .config
         echo "CONFIG_KERNEL_VERSION=${{ inputs.kernel_ver }}" >> .config
 
+        # 网络配置（不变）
         mkdir -p files/etc/config
         echo "config interface 'loopback'" >> files/etc/config/network
         echo "        option device 'lo'" >> files/etc/config/network
@@ -117,6 +136,7 @@ jobs:
         echo "        option type 'bridge'" >> files/etc/config/network
         echo "        list ports 'eth0'" >> files/etc/config/network
 
+        # 语言配置（不变）
         mkdir -p files/etc/config
         echo "config core 'main'" >> files/etc/config/luci
         echo "        option lang 'zh_cn'" >> files/etc/config/luci
@@ -146,4 +166,4 @@ jobs:
         name: ${{ env.CACHE_KEY }}-version
         path: |
           openwrt/include/version.mk
-          openwrt/bin/targets/armvirt/32/*.manifest
+          openwrt/bin/targets/arm/virt/*.manifest  # 适配ARM32输出路径
