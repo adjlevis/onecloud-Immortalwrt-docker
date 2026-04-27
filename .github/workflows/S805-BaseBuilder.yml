@@ -1,5 +1,5 @@
 # S805 底包构建｜仅同步上游稳定内核｜手动/自动内核选择
-name: S805-BaseBuild
+name: onecloud-S805-BaseBuild-(immortalwrt/openwrt)
 on:
   workflow_dispatch:
     inputs:
