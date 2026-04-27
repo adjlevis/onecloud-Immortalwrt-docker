@@ -2,7 +2,8 @@ name: S805-底包构建（同步官方更新）
 on:
   workflow_dispatch:
     inputs:
-      系统选择:
+      # 参数名用英文，描述用中文（符合语法）
+      system:
         description: '选择固件系统（ImmortalWrt更适配S805）'
         required: true
         default: 'immortalwrt'
@@ -10,7 +11,7 @@ on:
         options:
           - openwrt
           - immortalwrt
-      源码分支:
+      branch:
         description: '选择源码分支'
         required: true
         default: 'openwrt-24.10'
@@ -22,11 +23,13 @@ on:
     - cron: '0 0 * * 0'
 
 env:
-  缓存标识: s805-base-${{ inputs.系统选择 }}-${{ inputs.源码分支 }}
+  # 环境变量名用英文
+  CACHE_KEY: s805-base-${{ inputs.system }}-${{ inputs.branch }}
   TZ: Asia/Shanghai
 
 jobs:
-  编译底包:
+  # Job名用英文（语法要求）
+  build_base:
     runs-on: ubuntu-22.04
     steps:
     - name: 检出代码
@@ -41,12 +44,12 @@ jobs:
 
     - name: 同步最新源码
       run: |
-        echo "🔄 开始同步${{ inputs.系统选择 }}源码（分支：${{ inputs.源码分支 }}）..."
-        if [ "${{ inputs.系统选择 }}" = "immortalwrt" ]; then
-          git clone --depth=1 -b ${{ inputs.源码分支 }} https://github.com/immortalwrt/immortalwrt openwrt
+        echo "🔄 开始同步${{ inputs.system }}源码（分支：${{ inputs.branch }}）..."
+        if [ "${{ inputs.system }}" = "immortalwrt" ]; then
+          git clone --depth=1 -b ${{ inputs.branch }} https://github.com/immortalwrt/immortalwrt openwrt
           cd openwrt && git pull
         else
-          git clone --depth=1 -b ${{ inputs.源码分支 }} https://github.com/openwrt/openwrt openwrt
+          git clone --depth=1 -b ${{ inputs.branch }} https://github.com/openwrt/openwrt openwrt
           cd openwrt && git pull
         fi
         echo "✅ 源码同步完成！"
@@ -55,9 +58,7 @@ jobs:
       run: |
         echo "🔄 开始同步官方插件库..."
         cd openwrt
-        # 只同步插件库，不修改内核（避免找不存在的文件）
         ./scripts/feeds update -a && ./scripts/feeds install -a
-        # 打印架构目录（中文提示）
         echo "📌 源码内的架构目录列表（方便排查S805适配）："
         ls -l target/linux/
         echo "✅ 插件库同步完成！"
@@ -66,12 +67,12 @@ jobs:
       run: |
         echo "⚙️ 开始导入S805适配的基础配置..."
         cd openwrt
-        # 核心：S805的ARM32通用架构（替换无效的armvirt）
+        # S805的ARM32通用架构
         echo "CONFIG_TARGET_arm=y" >> .config
         echo "CONFIG_TARGET_arm_generic=y" >> .config
         echo "CONFIG_TARGET_arm_generic_Generic=y" >> .config
         echo "CONFIG_ROOTSFS_PARTSIZE=1536" >> .config
-        # 基础插件（必装）
+        # 基础插件
         echo "CONFIG_PACKAGE_luci-app-ttyd=y" >> .config
         echo "CONFIG_PACKAGE_luci-theme-argon=y" >> .config
         echo "CONFIG_PACKAGE_luci-i18n-base-zh-cn=y" >> .config
@@ -133,13 +134,13 @@ jobs:
           openwrt/dl
           openwrt/staging_dir
           openwrt/build_dir
-        key: ${{ env.缓存标识 }}
-      continue-on-error: true  # 缓存失败不影响固件编译
+        key: ${{ env.CACHE_KEY }}
+      continue-on-error: true
 
     - name: 上传版本信息（方便核对）
       uses: actions/upload-artifact@v4
       with:
-        name: ${{ env.缓存标识 }}-版本信息
+        name: ${{ env.CACHE_KEY }}-版本信息
         path: |
           openwrt/include/version.mk
           openwrt/bin/targets/arm/generic/*.manifest
